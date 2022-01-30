@@ -1,0 +1,13 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+git2 = "0.13.25"
+mongodb = { version="2.1.0", default-features=false, features=["sync"] }
+serde = { version = "1.0", features = ["derive"] }
+tungstenite = "0.16.0"
+url = "2.1.0"
