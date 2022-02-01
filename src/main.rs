@@ -16,6 +16,9 @@ use models::{CodeFunction, Repository, Scan};
 
 fn main() {
 
+    // TODO Conf
+    let workspace_path = "/home/corentin/workspace/chicon-runner/workspace";
+
     let client = Client::with_uri_str("mongodb://code:password@localhost:27017/code").unwrap();
     let database = client.database("code");
 
@@ -33,22 +36,20 @@ fn main() {
         .map(|result| result.unwrap())
         .collect();
 
-    let (mut socket, _response) = connect(Url::parse("ws://localhost:3000/socket").unwrap()).expect("Can't connect");
+    let (mut socket, _response) = connect(Url::parse("ws://localhost:8080/ws/runners").unwrap()).expect("Can't connect");
     println!("Connected to the scheduler");
-
-    // EXECUTION SIMULATION:
 
     loop {
 
         let repository_id: tungstenite::Message = socket.read_message().expect("Error reading message");
         println!("Received request for repository ID {}", repository_id);
 
-        let nodejs_repos: Vec<&Repository> = repositories.iter().filter(|repo| repo.public_id == repository_id.clone().into_text().unwrap()).collect();
+        // let nodejs_repos: Vec<&Repository> = repositories.iter().filter(|repo| repo.public_id == repository_id.clone().into_text().unwrap()).collect();
 
         // TODO Repo caching can be more optimal
-        workspace::clean(true);
+        workspace::clean(workspace_path, true);
 
-        for targeted_repo in nodejs_repos {
+        for targeted_repo in repositories.iter() {
 
             println!("Repository {} with ID {} ({:?}, {:?})", targeted_repo.public_id, targeted_repo.name, targeted_repo.branch, targeted_repo.directory);
             targeted_repo.clone();
@@ -56,7 +57,7 @@ fn main() {
             for code_function in code_functions.iter() {
 
                 println!(" - Executing function \"{}\" in {} environment (ID {})", code_function.name, code_function.environment.name, code_function.public_id);
-                workspace::clean(false);
+                workspace::clean(workspace_path, false);
 
                 // Write extractor logs
                 let mut function_file = OpenOptions::new()
@@ -85,11 +86,11 @@ fn main() {
                 }
                 
                 nerdctl.arg("--volume") // Volume mounting
-                    .arg("/home/corentin/sandbox/code-scanner/workspace/repository:/workspace:ro")
+                    .arg(format!("{}/repository:/workspace:ro", workspace_path))
                     .arg("--volume")
-                    .arg("/home/corentin/sandbox/code-scanner/workspace/bin:/tmp-bin:ro")
+                    .arg(format!("{}/bin:/tmp-bin:ro", workspace_path))
                     .arg("--volume")
-                    .arg("/home/corentin/sandbox/code-scanner/workspace/result:/result")
+                    .arg(format!("{}/result:/result", workspace_path))
                     .arg("--workdir")
                     .arg("/workspace");
 
@@ -143,7 +144,7 @@ fn main() {
                 }, None).unwrap();
             }
 
-            workspace::clean(true);
+            workspace::clean(workspace_path, true);
         }
     }
 }
