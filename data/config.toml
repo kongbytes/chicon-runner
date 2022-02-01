@@ -1,0 +1,2 @@
+workspace = "/home/corentin/workspace/chicon-runner/workspace"
+scheduler = "localhost:8080"

@@ -1,6 +1,10 @@
 use std::collections::HashMap;
+use std::path::Path;
 
+use anyhow::Error;
 use serde::{Deserialize, Serialize};
+
+use crate::config::Config;
 
 #[derive(Deserialize, Serialize)]
 pub struct Scan {
@@ -83,28 +87,17 @@ pub struct Repository {
 
 impl Repository {
 
-    pub fn _has_tag(&self, search_tag: &str) -> bool {
+    pub fn clone(&self, config: &Config) -> Result<(), Error> {
 
-        let result = self.tags.iter()
-            .find(|repo_tag| *repo_tag == search_tag);
-
-        return result.is_some();
-    }
-
-    pub fn clone(&self) {
-
-        println!("Cloning {}", self.name);
-        match git2::Repository::clone(&self.url, "workspace/repository") {
-            Ok(repo) => {
+        let repo_path = Path::new(&config.workspace).join("repository");
+        let _cloned_repo = git2::Repository::clone(&self.url, repo_path)?;
     
-                let branches = repo.branches(None).unwrap();
-                for _branch in branches {
-                    //println!("{:?}", branch.unwrap().0.name().unwrap());
-                }
-    
-            },
-            Err(e) => panic!("failed to clone: {}", e),
-        };
+        /*let branches = cloned_repo.branches(None)?;
+        for _branch in branches {
+            println!("{:?}", branch.?.0.name()?);
+        }*/
+
+        Ok(())
     }
 
 }

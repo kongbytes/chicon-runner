@@ -1,150 +1,127 @@
+mod config;
 mod models;
+mod scheduler;
 mod workspace;
+mod utils;
 
-use std::process::Command;
-use std::fs::{OpenOptions};
-use std::io::prelude::*;
-use std::time::SystemTime;
-use std::convert::{TryInto};
 use std::collections::HashMap;
+use std::process::Command;
+use std::time::SystemTime;
 
-use mongodb::{ bson::doc, sync::Client };
+use anyhow::{Context, Error, Result};
+use log::{info};
 use tungstenite::{connect};
 use url::Url;
 
-use models::{CodeFunction, Repository, Scan};
+use config::Config;
+use models::{CodeFunction, Scan};
+use scheduler::Scheduler;
+use workspace::Workspace;
 
-fn main() {
+fn main() -> Result<(), Error> {
 
-    // TODO Conf
-    let workspace_path = "/home/corentin/workspace/chicon-runner/workspace";
+    env_logger::init();
 
-    let client = Client::with_uri_str("mongodb://code:password@localhost:27017/code").unwrap();
-    let database = client.database("code");
+    let config = Config::parse("./data/config.toml")?;
+    let workspace = Workspace::new(&config);
+    let scheduler = Scheduler::new(&config);
 
-    let function_collection = database.collection::<CodeFunction>("functions");
-    let repo_collection = database.collection::<Repository>("repositories");
-    let scan_collection = database.collection::<Scan>("scans");
-
-    let repositories: Vec<Repository> = repo_collection.find(doc! {}, None)
-        .unwrap()
-        .map(|result| result.unwrap())
-        .collect();
-
-    let code_functions: Vec<CodeFunction> = function_collection.find(doc! {}, None)
-        .unwrap()
-        .map(|result| result.unwrap())
-        .collect();
-
-    let (mut socket, _response) = connect(Url::parse("ws://localhost:8080/ws/runners").unwrap()).expect("Can't connect");
-    println!("Connected to the scheduler");
+    let scheduler_raw_url = format!("ws://{}/ws/runners", config.scheduler);
+    let scheduler_url = Url::parse(&scheduler_raw_url)?;
+    let (mut socket, _response) = connect(scheduler_url)?;
+    info!("Connected to the scheduler, ready to receive requests");
 
     loop {
 
-        let repository_id: tungstenite::Message = socket.read_message().expect("Error reading message");
-        println!("Received request for repository ID {}", repository_id);
+        let raw_message = socket.read_message()?;
+        let repository_id: &str = raw_message.to_text()?;
+        info!("Received request for repository ID {}", repository_id);
 
-        // let nodejs_repos: Vec<&Repository> = repositories.iter().filter(|repo| repo.public_id == repository_id.clone().into_text().unwrap()).collect();
+        let code_functions = scheduler.get_functions().context("Failure when retrieving functions")?;
+        let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
 
         // TODO Repo caching can be more optimal
-        workspace::clean(workspace_path, true);
+        workspace.clean(true)?;
 
-        for targeted_repo in repositories.iter() {
+        info!("Starting function on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
+        repository.clone(&config)?;
 
-            println!("Repository {} with ID {} ({:?}, {:?})", targeted_repo.public_id, targeted_repo.name, targeted_repo.branch, targeted_repo.directory);
-            targeted_repo.clone();
+        for code_function in code_functions.iter() {
 
-            for code_function in code_functions.iter() {
-
-                println!(" - Executing function \"{}\" in {} environment (ID {})", code_function.name, code_function.environment.name, code_function.public_id);
-                workspace::clean(workspace_path, false);
-
-                // Write extractor logs
-                let mut function_file = OpenOptions::new()
-                        .read(false)
-                        .write(true)
-                        .create(true)
-                        .open(format!("workspace/bin/process.{}", &code_function.environment.file_extension)).unwrap();
-                function_file.write_all(code_function.content.as_bytes()).unwrap();
-
-                let mut nerdctl = Command::new("nerdctl");
-                nerdctl
-                    .arg("--namespace=kb")
-                    .arg("run")
-                    .arg("--rm")
-                    // Security flags
-                    .arg("--cap-drop")
-                    .arg("all")
-                    .arg("--security-opt")
-                    .arg("apparmor=docker-default");
-
-                if code_function.capabilities.network {
-                    nerdctl.arg("--network").arg("bridge");
-                }
-                else {
-                    nerdctl.arg("--network").arg("none");
-                }
-                
-                nerdctl.arg("--volume") // Volume mounting
-                    .arg(format!("{}/repository:/workspace:ro", workspace_path))
-                    .arg("--volume")
-                    .arg(format!("{}/bin:/tmp-bin:ro", workspace_path))
-                    .arg("--volume")
-                    .arg(format!("{}/result:/result", workspace_path))
-                    .arg("--workdir")
-                    .arg("/workspace");
-
-                if !code_function.capabilities.filesystem {
-                    nerdctl.arg("--read-only");
-                }
-                
-                // Binary
-                nerdctl.arg(&code_function.environment.base_image)
-                    .arg(&code_function.environment.executor)
-                    .arg(format!("/tmp-bin/process.{}", &code_function.environment.file_extension));
-                
-                let start_time = SystemTime::now();
-                let output = nerdctl
-                    .output()
-                    .expect("failed to execute process");
-                let timing_ms: usize = SystemTime::now()
-                    .duration_since(start_time)
-                    .unwrap()
-                    .as_millis()
-                    .try_into()
-                    .unwrap();
-
-                let stderr_logs = String::from_utf8(output.stderr).unwrap();
-                let stdout_logs = String::from_utf8(output.stdout).unwrap();
-                let logs = format!("{}\n{}", stdout_logs, stderr_logs);
-
-                let mut results: HashMap<String, String> = HashMap::new();
-                let potential_toml = std::fs::read_to_string("workspace/result/data.toml");
-
-                if let Ok(toml_content) = potential_toml {
-
-                    let toml_lines = toml_content.lines();
-                    for toml_line in toml_lines {
-
-                        let mut splitted_line = toml_line.split("=");
-                        let result_key = splitted_line.next().unwrap();
-                        let result_value = splitted_line.next().unwrap();
-
-                        results.insert(result_key.to_string(), result_value.to_string());
-                    }
-                }
-
-                scan_collection.insert_one(Scan {
-                    function_id: code_function.public_id.to_string(),
-                    repository_id: targeted_repo.public_id.to_string(),
-                    has_failed: !output.status.success() ,
-                    logs,
-                    timing_ms,
-                    results
-                }, None).unwrap();
-            }
-
-            workspace::clean(workspace_path, true);
+            let finished_scan = run_container(&config, &workspace, &repository.public_id , code_function)?;
+            scheduler.store_scan(finished_scan)?;
         }
+
+        workspace.clean(true)?;
     }
+}
+
+fn run_container(config: &Config, workspace: &Workspace, repository_id: &str, code_function: &CodeFunction) -> Result<Scan, Error> {
+
+    info!("Executing function \"{}\" in {} environment (ID {})", code_function.name, code_function.environment.name, code_function.public_id);
+    workspace.clean(false)?;
+
+    let script_path = format!("bin/process.{}", &code_function.environment.file_extension);
+    workspace.write_string(&script_path, &code_function.content)?;
+
+    let mut nerdctl = Command::new("nerdctl");
+    nerdctl
+        .arg("--namespace=kb")
+        .arg("run")
+        .arg("--rm")
+        // Security flags
+        .arg("--cap-drop")
+        .arg("all")
+        .arg("--security-opt")
+        .arg("apparmor=docker-default");
+
+    if code_function.capabilities.network {
+        nerdctl.arg("--network").arg("bridge");
+    }
+    else {
+        nerdctl.arg("--network").arg("none");
+    }
+    
+    nerdctl.arg("--volume") // Volume mounting
+        .arg(format!("{}/repository:/workspace:ro", config.workspace))
+        .arg("--volume")
+        .arg(format!("{}/bin:/tmp-bin:ro", config.workspace))
+        .arg("--volume")
+        .arg(format!("{}/result:/result", config.workspace))
+        .arg("--workdir")
+        .arg("/workspace");
+
+    if !code_function.capabilities.filesystem {
+        nerdctl.arg("--read-only");
+    }
+    
+    // Binary
+    nerdctl.arg(&code_function.environment.base_image)
+        .arg(&code_function.environment.executor)
+        .arg(format!("/tmp-bin/process.{}", &code_function.environment.file_extension));
+    
+    let start_time = SystemTime::now();
+    let output = nerdctl.output()?;
+    let timing_ms: usize = utils::compute_time_diff(start_time)?;
+
+    let stderr_logs = String::from_utf8(output.stderr).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
+    let stdout_logs = String::from_utf8(output.stdout).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
+    let logs = format!("{}\n{}", stdout_logs, stderr_logs);
+
+    let mut metric_results: Option<HashMap<String, String>> = None;
+    let potential_toml = workspace.read_string("result/data.toml");
+
+    if let Ok(toml_content) = potential_toml {
+        metric_results = Some(toml::from_str(&toml_content)?);
+    }
+
+    let finished_scan = Scan {
+        function_id: code_function.public_id.to_string(),
+        repository_id: repository_id.to_string(),
+        has_failed: !output.status.success() ,
+        logs,
+        timing_ms,
+        results: metric_results.unwrap_or_default()
+    };
+    Ok(finished_scan)
 }
