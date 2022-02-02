@@ -11,6 +11,8 @@ pub struct Config {
 
     pub scheduler: String,
 
+    pub cache_size: String
+
 }
 
 impl Config {
@@ -23,6 +25,12 @@ impl Config {
         let config: Config = toml::from_str(&content)?;
 
         Ok(config)
+    }
+
+    pub fn get_cache_bytes(&self) -> Result<u64, Error> {
+
+        let cache_mb: u64 = self.cache_size.parse()?;
+        Ok(cache_mb * 1_000_000)
     }
 
 }

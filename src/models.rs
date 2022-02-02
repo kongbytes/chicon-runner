@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::Error;
+use anyhow::{bail, Error};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -87,10 +87,39 @@ pub struct Repository {
 
 impl Repository {
 
-    pub fn clone(&self, config: &Config) -> Result<(), Error> {
+    pub fn pull_or_clone(&self, config: &Config) -> Result<(), Error> {
 
-        let repo_path = Path::new(&config.workspace).join("repository");
-        let _cloned_repo = git2::Repository::clone(&self.url, repo_path)?;
+        let repository_path = Path::new(&config.workspace).join(&self.public_id).join("repository");
+        let git_path = repository_path.join(".git");
+
+        if git_path.is_dir() {
+
+            let existing = git2::Repository::open(repository_path)?;
+            existing.find_remote("origin")?.fetch(&["master"], None, None)?;  // TODO Branch name
+
+            let fetch_head = existing.find_reference("FETCH_HEAD")?;
+            let fetch_commit = existing.reference_to_annotated_commit(&fetch_head)?;
+            let (merge_analysis, _) = existing.merge_analysis(&[&fetch_commit])?;
+
+            if merge_analysis.is_up_to_date() {
+                return Ok(());
+            } 
+            if !merge_analysis.is_fast_forward() {
+                bail!("Fast-forward only authorized");
+            }
+
+            // Perform a fast-forward merge (Git pull)
+            let refname = format!("refs/heads/{}", "master");    // TODO Branch name
+            let mut reference = existing.find_reference(&refname)?;
+            reference.set_target(fetch_commit.id(), "Fast-Forward")?;
+            existing.set_head(&refname)?;
+            existing.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+
+            return Ok(())
+        }
+        
+
+        git2::Repository::clone(&self.url, repository_path)?;
     
         /*let branches = cloned_repo.branches(None)?;
         for _branch in branches {

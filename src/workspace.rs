@@ -4,12 +4,18 @@ use std::io::prelude::*;
 use std::path::Path;
 
 use anyhow::Error;
+use fs_extra::dir::get_size;
+use log::{warn};
 
 use crate::config::Config;
 
+const DEFAULT_CACHE: u64 = 100_000_000;
+
 pub struct Workspace {
 
-    base_path: String
+    base_path: String,
+
+    cache_size: u64
 
 }
 
@@ -18,29 +24,37 @@ impl Workspace {
     pub fn new(config: &Config) -> Workspace {
 
         Workspace {
-            base_path: config.workspace.to_string()
+            base_path: config.workspace.to_string(),
+            cache_size: config.get_cache_bytes().unwrap_or(DEFAULT_CACHE)
         }
     }
 
-    pub fn clean(&self, full_clean: bool) -> Result<(), Error> {
+    pub fn clean(&self, repository_id: &str, full_clean: bool) -> Result<(), Error> {
+
+        let base_repository = Path::new(&self.base_path).join(repository_id);
 
         if full_clean {
-            fs::remove_dir_all(format!("{}/repository", self.base_path)).ok();
+            fs::remove_dir_all(&base_repository).ok();
+        }
+        else {
+            fs::remove_dir_all(&base_repository.join("bin")).ok();
+            fs::remove_dir_all(&base_repository.join("result")).ok();
+        }
+    
+        if !base_repository.is_dir() {
+            fs::create_dir(&base_repository)?;
         }
         
-        fs::remove_dir_all(format!("{}/bin", self.base_path)).ok();
-        fs::remove_dir_all(format!("{}/result", self.base_path)).ok();
-    
-        fs::create_dir(format!("{}/bin", self.base_path))?;
-        fs::create_dir(format!("{}/result", self.base_path))?;
+        fs::create_dir(base_repository.join("bin"))?;
+        fs::create_dir(base_repository.join("result"))?;
 
         Ok(())
     }
 
-    pub fn write_string(&self, relative_path: &str, content: &str) -> Result<(), Error> {
+    pub fn write_string(&self, repository_id: &str, relative_path: &str, content: &str) -> Result<(), Error> {
 
         let base_path = Path::new(&self.base_path);
-        let absolute_path = base_path.join(relative_path);
+        let absolute_path = base_path.join(repository_id).join(relative_path);
 
         let mut workspace_file = OpenOptions::new()
                 .read(false).write(true).create(true)
@@ -50,14 +64,50 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn read_string(&self, relative_path: &str) -> Result<String, Error> {
+    pub fn read_string(&self, repository_id: &str, relative_path: &str) -> Result<String, Error> {
 
         let base_path = Path::new(&self.base_path);
-        let absolute_path = base_path.join(relative_path);
+        let absolute_path = base_path.join(repository_id).join(relative_path);
 
         let file_content = read_to_string(absolute_path)?;
 
         Ok(file_content)
+    }
+
+    pub fn get_total_usage(&self) -> Result<u64, Error> {
+
+        let base_path = Path::new(&self.base_path);
+        let workspace_size = get_size(base_path)?;
+
+        Ok(workspace_size)
+    }
+
+    pub fn prune_storage(&self) -> Result<(), Error> {
+
+        for _ in 0..10 {
+
+            let current_usage = self.get_total_usage()?;
+            if current_usage < self.cache_size {
+                return Ok(())
+            }
+
+            let storage_mb = current_usage / 1_000_000;
+            warn!("Storage is over cache limit ({}Mb), selecting a path to delete", storage_mb);
+    
+            let paths = fs::read_dir(&self.base_path)?;
+            let potential_dir = paths.into_iter().find(|path| path.as_ref().unwrap().path().is_dir());
+
+            match potential_dir {
+                Some(trashed_dir) => {
+                    fs::remove_dir_all(trashed_dir.unwrap().path())?;
+                },
+                None => {
+                    warn!("Could not find a directory to delete in the workspace");
+                }
+            }
+        }
+
+        Ok(())
     }
 
 }

@@ -26,14 +26,17 @@ fn main() -> Result<(), Error> {
     let workspace = Workspace::new(&config);
     let scheduler = Scheduler::new(&config);
 
-    let scheduler_raw_url = format!("ws://{}/ws/runners", config.scheduler);
-    let scheduler_url = Url::parse(&scheduler_raw_url)?;
-    let (mut socket, _response) = connect(scheduler_url)?;
+    let storage_mb = workspace.get_total_usage()? / 1_000_000;
+    info!("Workspace usage is currently {}Mb", storage_mb);
+
+    let websocker_raw_url = format!("ws://{}/ws/runners", config.scheduler);
+    let websocket_url = Url::parse(&websocker_raw_url)?;
+    let (mut websocket, _response) = connect(websocket_url)?;
     info!("Connected to the scheduler, ready to receive requests");
 
     loop {
 
-        let raw_message = socket.read_message()?;
+        let raw_message = websocket.read_message()?;
         let repository_id: &str = raw_message.to_text()?;
         info!("Received request for repository ID {}", repository_id);
 
@@ -41,28 +44,31 @@ fn main() -> Result<(), Error> {
         let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
 
         // TODO Repo caching can be more optimal
-        workspace.clean(true)?;
+        workspace.clean(&repository.public_id, false)?;
 
         info!("Starting function on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
-        repository.clone(&config)?;
+        repository.pull_or_clone(&config)?;
 
         for code_function in code_functions.iter() {
+
+            info!("Executing function \"{}\" in {} environment (ID {})", code_function.name, code_function.environment.name, code_function.public_id);
 
             let finished_scan = run_container(&config, &workspace, &repository.public_id , code_function)?;
             scheduler.store_scan(finished_scan)?;
         }
 
-        workspace.clean(true)?;
+        workspace.clean(&repository.public_id, false)?;
+
+        workspace.prune_storage()?;
     }
 }
 
 fn run_container(config: &Config, workspace: &Workspace, repository_id: &str, code_function: &CodeFunction) -> Result<Scan, Error> {
 
-    info!("Executing function \"{}\" in {} environment (ID {})", code_function.name, code_function.environment.name, code_function.public_id);
-    workspace.clean(false)?;
+    workspace.clean(repository_id, false).context("Could not clean workspace before run")?;
 
     let script_path = format!("bin/process.{}", &code_function.environment.file_extension);
-    workspace.write_string(&script_path, &code_function.content)?;
+    workspace.write_string(repository_id, &script_path, &code_function.content)?;
 
     let mut nerdctl = Command::new("nerdctl");
     nerdctl
@@ -83,11 +89,11 @@ fn run_container(config: &Config, workspace: &Workspace, repository_id: &str, co
     }
     
     nerdctl.arg("--volume") // Volume mounting
-        .arg(format!("{}/repository:/workspace:ro", config.workspace))
+        .arg(format!("{}/{}/repository:/workspace:ro", config.workspace, repository_id))
         .arg("--volume")
-        .arg(format!("{}/bin:/tmp-bin:ro", config.workspace))
+        .arg(format!("{}/{}/bin:/tmp-bin:ro", config.workspace, repository_id))
         .arg("--volume")
-        .arg(format!("{}/result:/result", config.workspace))
+        .arg(format!("{}/{}/result:/result", config.workspace, repository_id))
         .arg("--workdir")
         .arg("/workspace");
 
@@ -109,7 +115,7 @@ fn run_container(config: &Config, workspace: &Workspace, repository_id: &str, co
     let logs = format!("{}\n{}", stdout_logs, stderr_logs);
 
     let mut metric_results: Option<HashMap<String, String>> = None;
-    let potential_toml = workspace.read_string("result/data.toml");
+    let potential_toml = workspace.read_string(repository_id, "result/data.toml");
 
     if let Ok(toml_content) = potential_toml {
         metric_results = Some(toml::from_str(&toml_content)?);
