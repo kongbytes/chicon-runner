@@ -5,13 +5,41 @@ use anyhow::Error;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
+pub struct ConfigWorkspace {
+
+    pub path: String,
+
+    pub cache_limit: String
+
+}
+
+#[derive(Deserialize)]
+pub struct ConfigScheduler {
+
+    pub base_url: String,
+
+    pub token: String,
+
+    pub retry_period: u64
+
+}
+
+#[derive(Deserialize)]
+pub struct ConfigContainer {
+
+    pub namespace: String,
+
+}
+
+
+#[derive(Deserialize)]
 pub struct Config {
 
-    pub workspace: String,
+    pub workspace: ConfigWorkspace,
 
-    pub scheduler: String,
+    pub scheduler: ConfigScheduler,
 
-    pub cache_size: String
+    pub container: ConfigContainer
 
 }
 
@@ -29,7 +57,7 @@ impl Config {
 
     pub fn get_cache_bytes(&self) -> Result<u64, Error> {
 
-        let cache_mb: u64 = self.cache_size.parse()?;
+        let cache_mb: u64 = self.workspace.cache_limit.parse()?;
         Ok(cache_mb * 1_000_000)
     }
 

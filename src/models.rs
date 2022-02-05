@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use anyhow::{bail, Error};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize)]
 pub struct Scan {
 
     #[serde(rename = "functionId")]
@@ -14,6 +15,8 @@ pub struct Scan {
 
     #[serde(rename = "repositoryId")]
     pub repository_id: String,
+
+    pub commit: GitCommit,
 
     #[serde(rename = "hasFailed")]
     pub has_failed: bool,
@@ -39,6 +42,8 @@ pub struct FunctionEnv {
     pub file_extension: String,
     
     pub executor: String,
+
+    pub user: Option<String>
 
 }
 
@@ -85,48 +90,77 @@ pub struct Repository {
 
 }
 
+#[derive(Serialize, Clone)]
+pub struct GitCommit {
+
+    #[serde(rename = "commitId")]
+    pub commit_id: String,
+
+    pub message: Option<String>,
+    
+    pub branch: String
+
+}
+
+impl<'repo> From<git2::Commit<'repo>> for GitCommit {
+
+    fn from(commit: git2::Commit) -> GitCommit {
+
+        GitCommit {
+            commit_id: commit.id().to_string(),
+            message: commit.message().map(|message| message.to_string()),
+            branch: "master".to_string() // TODO
+        }
+    }
+
+}
+
 impl Repository {
 
-    pub fn pull_or_clone(&self, config: &Config) -> Result<(), Error> {
+    pub fn pull_or_clone(&self, config: Rc<Config>) -> Result<GitCommit, Error> {
 
-        let repository_path = Path::new(&config.workspace).join(&self.public_id).join("repository");
+        let default_branch = "master";  // TODO
+
+        let repository_path = Path::new(&config.workspace.path).join(&self.public_id).join("repository");
         let git_path = repository_path.join(".git");
 
         if git_path.is_dir() {
 
             let existing = git2::Repository::open(repository_path)?;
-            existing.find_remote("origin")?.fetch(&["master"], None, None)?;  // TODO Branch name
+            existing.find_remote("origin")?.fetch(&[default_branch], None, None)?;
 
             let fetch_head = existing.find_reference("FETCH_HEAD")?;
             let fetch_commit = existing.reference_to_annotated_commit(&fetch_head)?;
             let (merge_analysis, _) = existing.merge_analysis(&[&fetch_commit])?;
 
             if merge_analysis.is_up_to_date() {
-                return Ok(());
+
+                let commit = existing.find_commit(fetch_commit.id())?;
+                return Ok(commit.into());
             } 
             if !merge_analysis.is_fast_forward() {
                 bail!("Fast-forward only authorized");
             }
 
             // Perform a fast-forward merge (Git pull)
-            let refname = format!("refs/heads/{}", "master");    // TODO Branch name
+            let refname = format!("refs/heads/{}", default_branch);
             let mut reference = existing.find_reference(&refname)?;
             reference.set_target(fetch_commit.id(), "Fast-Forward")?;
             existing.set_head(&refname)?;
             existing.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
 
-            return Ok(())
+            let commit = existing.find_commit(fetch_commit.id())?;
+            return Ok(commit.into())
         }
         
 
-        git2::Repository::clone(&self.url, repository_path)?;
-    
-        /*let branches = cloned_repo.branches(None)?;
-        for _branch in branches {
-            println!("{:?}", branch.?.0.name()?);
-        }*/
+        let cloned = git2::Repository::clone(&self.url, repository_path)?;
 
-        Ok(())
+        let fetch_head = cloned.find_reference("HEAD")?;
+        let fetch_commit = cloned.reference_to_annotated_commit(&fetch_head)?;
+        let commit = cloned.find_commit(fetch_commit.id())?;
+    
+        Ok(commit.into())
     }
 
 }

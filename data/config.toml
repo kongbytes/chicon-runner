@@ -1,3 +1,13 @@
-workspace = "/home/corentin/workspace/chicon-runner/workspace"
-scheduler = "localhost:8080"
-cache_size = "8" # In Mb
+# This file should always be treated as sensitive (400 permissions at least)
+
+[workspace]
+path = "/home/corentin/workspace/chicon-runner/workspace"
+cache_limit = "20" # Mb
+
+[scheduler]
+base_url = "localhost:8080"
+token = "secret"
+retry_period = 5 # Seconds
+
+[container]
+namespace = "kb"

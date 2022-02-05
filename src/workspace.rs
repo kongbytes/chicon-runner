@@ -1,6 +1,7 @@
 use std::fs;
 use std::fs::{read_to_string, OpenOptions};
 use std::io::prelude::*;
+use std::rc::Rc;
 use std::path::Path;
 
 use anyhow::Error;
@@ -21,10 +22,10 @@ pub struct Workspace {
 
 impl Workspace {
 
-    pub fn new(config: &Config) -> Workspace {
+    pub fn new(config: Rc<Config>) -> Workspace {
 
         Workspace {
-            base_path: config.workspace.to_string(),
+            base_path: config.workspace.path.to_string(),
             cache_size: config.get_cache_bytes().unwrap_or(DEFAULT_CACHE)
         }
     }
