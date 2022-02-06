@@ -7,6 +7,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum MetricValue {
+
+    Number(i64),
+
+    Text(String),
+
+    Boolean(bool)
+
+}
+
 #[derive(Serialize)]
 pub struct Scan {
 
@@ -26,7 +38,7 @@ pub struct Scan {
     #[serde(rename = "timingMs")]
     pub timing_ms: usize,
 
-    pub results: HashMap<String, String>
+    pub results: HashMap<String, MetricValue>
 
 }
 

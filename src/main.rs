@@ -175,7 +175,7 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
     let stdout_logs = String::from_utf8(output.stdout).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
     let logs = format!("{}\n{}", stdout_logs, stderr_logs);
 
-    let mut metric_results: Option<HashMap<String, String>> = None;
+    let mut metric_results: Option<HashMap<String, models::MetricValue>> = None;
     let potential_toml = workspace.read_string(repository_id, "result/data.toml");
 
     if let Ok(toml_content) = potential_toml {
