@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -38,7 +37,18 @@ pub struct Scan {
     #[serde(rename = "timingMs")]
     pub timing_ms: usize,
 
-    pub results: HashMap<String, MetricValue>
+    pub results: Vec<ScanMetadata>
+
+}
+
+#[derive(Serialize)]
+pub struct ScanMetadata {
+
+    pub key: String,
+
+    pub description: String,
+
+    pub value: MetricValue
 
 }
 
@@ -80,7 +90,24 @@ pub struct CodeFunction {
 
     pub capabilities: FunctionCapabilities,
 
-    pub content: String
+    pub content: String,
+
+    pub outputs: Vec<FunctionOutput>
+
+}
+
+#[derive(Deserialize)]
+pub struct FunctionOutput {
+
+    pub key: String,
+
+    pub description: String,
+
+    #[serde(rename = "dataType")]
+    pub data_type: String, // TODO Should be enum
+
+    #[serde(rename = "defaultValue")]
+    pub default_value: MetricValue
 
 }
 

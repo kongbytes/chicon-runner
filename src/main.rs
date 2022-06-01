@@ -17,7 +17,7 @@ use tungstenite::{connect, WebSocket, stream::MaybeTlsStream};
 use url::Url;
 
 use config::Config;
-use models::{CodeFunction, Scan};
+use models::{CodeFunction, Scan, ScanMetadata};
 use scheduler::Scheduler;
 use workspace::Workspace;
 
@@ -186,6 +186,20 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
         // TODO TOML error handling
     }
 
+    let results: Vec<ScanMetadata> = metric_results.unwrap_or_default().into_iter().map(|(result_key, result_value)| {
+        
+        let potential_description = code_function.outputs.iter()
+            .find(|output| output.key == result_key)
+            .map(|output| output.description.clone());
+
+        ScanMetadata {
+            key: result_key,
+            description: potential_description.unwrap_or_default(),
+            value: result_value
+        }
+
+    }).collect();
+
     let finished_scan = Scan {
         function_id: code_function.public_id.to_string(),
         repository_id: repository_id.to_string(),
@@ -193,7 +207,7 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
         has_failed: !output.status.success() ,
         logs,
         timing_ms,
-        results: metric_results.unwrap_or_default()
+        results
     };
     Ok(finished_scan)
 }
