@@ -5,7 +5,7 @@ path = "/home/corentin/workspace/chicon-runner/workspace"
 cache_limit = "20" # Mb
 
 [scheduler]
-base_url = "localhost:8080"
+base_url = "localhost:3000"
 token = "secret"
 retry_period = 5 # Seconds
 

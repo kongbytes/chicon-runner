@@ -179,7 +179,11 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
     let potential_toml = workspace.read_string(repository_id, "result/data.toml");
 
     if let Ok(toml_content) = potential_toml {
-        metric_results = Some(toml::from_str(&toml_content)?);
+
+        if let Ok(tom_results) = toml::from_str(&toml_content) {
+            metric_results = Some(tom_results);
+        }
+        // TODO TOML error handling
     }
 
     let finished_scan = Scan {
