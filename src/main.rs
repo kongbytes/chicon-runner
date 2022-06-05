@@ -11,13 +11,14 @@ use std::rc::Rc;
 use std::net::TcpStream;
 use std::thread;
 
-use anyhow::{Context, Error, Result};
+use anyhow::{bail, Context, Error, Result};
 use log::{info, error};
 use tungstenite::{connect, WebSocket, stream::MaybeTlsStream};
 use url::Url;
+use serde::Deserialize;
 
 use config::Config;
-use models::{CodeFunction, Scan, ScanMetadata};
+use models::{CodeFunction, Scan, ScanMetadata, CodeIssue};
 use scheduler::Scheduler;
 use workspace::Workspace;
 
@@ -40,6 +41,8 @@ fn main() -> Result<(), Error> {
 
         let mut some_websocket: Option<WebSocket<MaybeTlsStream<TcpStream>>> = None;
 
+        // Perform scheduler connect attempts in this loop, this enables the
+        // runner to be more resilient against scheduler crashes.
         loop {
 
             let mut is_connected = false;
@@ -85,15 +88,16 @@ fn main() -> Result<(), Error> {
             }
             let raw_message = socket_read_result.unwrap();
 
-            if let Err(text_error) = raw_message.to_text() {
-                error!("Could not read text message from socket: {}", text_error);
-                break;
+            let decode_result = decode_message(raw_message);
+            if decode_result.is_err() {
+                error!("Could not read text message from socket");
+                break;   
             }
-            let repository_id: &str = raw_message.to_text().unwrap();
-            info!("Received request for repository ID {}", repository_id);
+            let request = decode_result.unwrap();
+            info!("Received request for repository ID {}", request.repository_id);
 
-            let code_functions = scheduler.get_functions().context("Failure when retrieving functions")?;
-            let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
+            let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
+            let repository = scheduler.get_repository(&request.repository_id).context("Failure when retrieving repository")?;
 
             workspace.clean(&repository.public_id, false)?;
 
@@ -106,13 +110,40 @@ fn main() -> Result<(), Error> {
 
                 let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
                 scheduler.store_scan(finished_scan)?;
+                process_issues(&workspace, &repository.public_id, &scheduler)?;
             }
 
             workspace.clean(&repository.public_id, false)?;
-
             workspace.prune_storage()?;
         }
     }
+}
+
+struct ScanRequest {
+    _version: String,
+    repository_id: String,
+    functions: Vec<String>
+}
+
+fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Error> {
+
+    if let Err(text_error) = raw_message.to_text() {
+        bail!(text_error);
+    }
+
+    // TODO Make messsage parse below (v1;repos;functions) more effective
+    // and resilient against crashes (does not handle multiple repos, version
+    // control and function selection).
+    let runner_command: &str = raw_message.to_text().unwrap();
+    let message_parts: Vec<&str> = runner_command.split(';').collect();
+    let repository_id = message_parts.get(1).unwrap();
+
+    let scan_request = ScanRequest {
+        _version: message_parts.get(0).unwrap_or(&"v1").to_string(),
+        repository_id: repository_id.to_string(),
+        functions: vec![]
+    };
+    Ok(scan_request)
 }
 
 fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str, code_function: &CodeFunction, commit: models::GitCommit) -> Result<Scan, Error> {
@@ -180,10 +211,9 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
 
     if let Ok(toml_content) = potential_toml {
 
-        if let Ok(tom_results) = toml::from_str(&toml_content) {
-            metric_results = Some(tom_results);
+        if let Ok(toml_results) = toml::from_str(&toml_content) {    // TODO TOML error handling
+            metric_results = Some(toml_results);
         }
-        // TODO TOML error handling
     }
 
     let results: Vec<ScanMetadata> = metric_results.unwrap_or_default().into_iter().map(|(result_key, result_value)| {
@@ -210,6 +240,43 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
         results
     };
     Ok(finished_scan)
+}
+
+#[derive(Deserialize)]
+struct IssueContainer {
+    issues: Vec<CodeIssue>
+}
+
+fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Scheduler) -> Result<(), Error> {
+
+    let potential_issues = workspace.read_string(repository_id, "result/issues.toml");
+
+    if let Ok(vulnerabilities_content) = potential_issues {
+
+        let mut issue_list: Vec<CodeIssue> = vec![];
+        let parsed_toml: Result<IssueContainer, toml::de::Error> = toml::from_str(&vulnerabilities_content);
+
+        if let Ok(toml_results) = parsed_toml {
+            issue_list = toml_results.issues;
+        }
+        else {
+            // TODO TOML error handling
+            error!("Could not parse issue TOML for repository {}", repository_id);
+        }
+
+        for issue_item in issue_list {
+
+            scheduler.store_issue(CodeIssue {
+                name: issue_item.name,
+                repository_id: Some(repository_id.to_string())
+            })?;
+        }
+    }
+    else {
+        info!("No issues found linked to repository ID {}", repository_id);
+    }
+
+    Ok(())
 }
 
 fn pull_image(image_tag: &str, namespace_arg: &str) -> Result<(), Error> {

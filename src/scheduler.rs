@@ -4,7 +4,7 @@ use std::rc::Rc;
 use anyhow::Error;
 use isahc::{prelude::*, Request};
 
-use crate::models::{CodeFunction, Repository, Scan};
+use crate::models::{CodeFunction, Repository, Scan, CodeIssue};
 use crate::config::Config;
 
 pub struct Scheduler {
@@ -42,7 +42,7 @@ impl Scheduler {
         Ok(code_functions)
     }
 
-    pub fn get_functions(&self) -> Result<Vec<CodeFunction>, Error> {
+    pub fn get_functions(&self, functions: &Vec<String>) -> Result<Vec<CodeFunction>, Error> {
 
         let functions_url = format!("{}/functions", self.base_url);
         let code_functions = Request::get(&functions_url)
@@ -53,7 +53,14 @@ impl Scheduler {
             .send()?
             .json::<Vec<CodeFunction>>()?;
 
-        Ok(code_functions)
+        if functions.is_empty() {
+            return Ok(code_functions)
+        }
+
+        let filtered_functions = code_functions.into_iter()
+            .filter(|function| functions.contains(&function.public_id))
+            .collect();
+        Ok(filtered_functions)
     }
 
     pub fn store_scan(&self, scan: Scan) -> Result<(), Error> {
@@ -62,6 +69,21 @@ impl Scheduler {
         let request_body = serde_json::to_string(&scan)?;
 
         Request::post(&scan_url)    // TODO Check that failed HTTP status codes are processed
+            .header("Content-Type", "application/json")
+            .header("Authorization", self.authorization_value())
+            .timeout(self.default_duration)
+            .body(request_body)?
+            .send()?;
+
+        Ok(())
+    }
+
+    pub fn store_issue(&self, issue: CodeIssue) -> Result<(), Error> {
+
+        let report_url = format!("{}/issues", self.base_url);
+        let request_body = serde_json::to_string(&issue)?;
+
+        Request::post(&report_url)    // TODO Check that failed HTTP status codes are processed
             .header("Content-Type", "application/json")
             .header("Authorization", self.authorization_value())
             .timeout(self.default_duration)

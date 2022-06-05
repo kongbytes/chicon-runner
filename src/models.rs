@@ -18,6 +18,16 @@ pub enum MetricValue {
 
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct CodeIssue {
+
+    pub name: String,
+
+    #[serde(rename = "repositoryId")]
+    pub repository_id: Option<String>,
+
+}
+
 #[derive(Serialize)]
 pub struct Scan {
 
