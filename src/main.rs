@@ -136,12 +136,16 @@ fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Erro
     // control and function selection).
     let runner_command: &str = raw_message.to_text().unwrap();
     let message_parts: Vec<&str> = runner_command.split(';').collect();
-    let repository_id = message_parts.get(1).unwrap();
+    let repository_id = message_parts.get(1).unwrap().to_string();
+    let functions: Vec<String> = message_parts.get(2).unwrap()
+        .split(',')
+        .map(|m| m.to_string())
+        .collect();
 
     let scan_request = ScanRequest {
         _version: message_parts.get(0).unwrap_or(&"v1").to_string(),
-        repository_id: repository_id.to_string(),
-        functions: vec![]
+        repository_id,
+        functions
     };
     Ok(scan_request)
 }
