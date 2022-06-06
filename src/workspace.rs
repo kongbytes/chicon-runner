@@ -52,6 +52,16 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn clean_bin(&self, repository_id: &str) -> Result<(), Error> {
+
+        let base_repository = Path::new(&self.base_path).join(repository_id);
+
+        fs::remove_dir_all(&base_repository.join("bin")).ok();
+        fs::create_dir(base_repository.join("bin"))?;
+        
+        Ok(())
+    }
+
     pub fn write_string(&self, repository_id: &str, relative_path: &str, content: &str) -> Result<(), Error> {
 
         let base_path = Path::new(&self.base_path);

@@ -106,7 +106,7 @@ fn main() -> Result<(), Error> {
 
             for code_function in code_functions.iter() {
 
-                info!("Executing function \"{}\" in {} environment (ID {})", code_function.name, code_function.environment.name, code_function.public_id);
+                info!("Executing function \"{}\" (ID {})", code_function.name, code_function.public_id);
 
                 let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
                 scheduler.store_scan(finished_scan)?;
@@ -154,61 +154,82 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
 
     workspace.clean(repository_id, false).context("Could not clean workspace before run")?;
 
-    let script_path = format!("bin/process.{}", &code_function.environment.file_extension);
-    workspace.write_string(repository_id, &script_path, &code_function.content)?;
+    let mut timing_ms: usize = 0;
+    let mut logs = "".to_string();
+    let mut has_failed = false;
 
-    let namespace_arg = format!("--namespace={}", config.container.namespace);
-    pull_image(&code_function.environment.base_image, &namespace_arg).context("Could not pull container image")?;
+    let stage_total = code_function.stages.len();
+    let mut stage_count = 0;
 
-    let mut nerdctl = Command::new("nerdctl");
-    nerdctl
-        .arg(&namespace_arg)
-        .arg("run")
-        .arg("--rm")
-        // Security flags
-        .arg("--cap-drop")
-        .arg("all")
-        .arg("--security-opt")
-        .arg("apparmor=docker-default")
-        .arg("--security-opt")
-        .arg("no-new-privileges");
+    for stage in &code_function.stages {
 
-    if code_function.capabilities.network {
-        nerdctl.arg("--network").arg("bridge");
+        stage_count += 1;
+        info!("Executing stage of {}/{} \"{}\" : environment {} ({})", stage_count, stage_total, code_function.name, stage.environment.name, stage.environment.base_image);
+
+        let script_path = format!("bin/process.{}", &stage.environment.file_extension);
+        workspace.write_string(repository_id, &script_path, &stage.content)?;
+
+        let namespace_arg = format!("--namespace={}", config.container.namespace);
+        pull_image(&stage.environment.base_image, &namespace_arg).context("Could not pull container image")?;
+
+        let mut nerdctl = Command::new("nerdctl");
+        nerdctl
+            .arg(&namespace_arg)
+            .arg("run")
+            .arg("--rm")
+            // Security flags
+            .arg("--cap-drop")
+            .arg("all")
+            .arg("--security-opt")
+            .arg("apparmor=docker-default")
+            .arg("--security-opt")
+            .arg("no-new-privileges");
+
+        if code_function.capabilities.network {
+            nerdctl.arg("--network").arg("bridge");
+        }
+        else {
+            nerdctl.arg("--network").arg("none");
+        }
+        
+        if let Some(user) = &stage.environment.user {
+            nerdctl.arg("--user").arg(user);
+        }
+
+        nerdctl.arg("--volume") // Volume mounting
+            .arg(format!("{}/{}/repository:/workspace:ro", config.workspace.path, repository_id))
+            .arg("--volume")
+            .arg(format!("{}/{}/bin:/tmp-bin:ro", config.workspace.path, repository_id))
+            .arg("--volume")
+            .arg(format!("{}/{}/result:/result", config.workspace.path, repository_id))
+            .arg("--workdir")
+            .arg("/workspace");
+
+        if !code_function.capabilities.filesystem {
+            nerdctl.arg("--read-only");
+        }
+        
+        // Binary
+        nerdctl.arg(&stage.environment.base_image)
+            .arg(&stage.environment.executor)
+            .arg(format!("/tmp-bin/process.{}", &stage.environment.file_extension));
+        
+        let start_time = SystemTime::now();
+        let output = nerdctl.output()?;
+        timing_ms += utils::compute_time_diff(start_time)?;
+
+        let stderr_logs = String::from_utf8(output.stderr).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
+        let stdout_logs = String::from_utf8(output.stdout).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
+        logs.push_str(
+            &format!("{}\n{}", stdout_logs, stderr_logs) // TODO More accurate mix
+        );
+
+        if !output.status.success() {
+            has_failed = true;
+        }
+
+        workspace.clean_bin(repository_id)?;
     }
-    else {
-        nerdctl.arg("--network").arg("none");
-    }
-    
-    if let Some(user) = &code_function.environment.user {
-        nerdctl.arg("--user").arg(user);
-    }
-
-    nerdctl.arg("--volume") // Volume mounting
-        .arg(format!("{}/{}/repository:/workspace:ro", config.workspace.path, repository_id))
-        .arg("--volume")
-        .arg(format!("{}/{}/bin:/tmp-bin:ro", config.workspace.path, repository_id))
-        .arg("--volume")
-        .arg(format!("{}/{}/result:/result", config.workspace.path, repository_id))
-        .arg("--workdir")
-        .arg("/workspace");
-
-    if !code_function.capabilities.filesystem {
-        nerdctl.arg("--read-only");
-    }
-    
-    // Binary
-    nerdctl.arg(&code_function.environment.base_image)
-        .arg(&code_function.environment.executor)
-        .arg(format!("/tmp-bin/process.{}", &code_function.environment.file_extension));
-    
-    let start_time = SystemTime::now();
-    let output = nerdctl.output()?;
-    let timing_ms: usize = utils::compute_time_diff(start_time)?;
-
-    let stderr_logs = String::from_utf8(output.stderr).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
-    let stdout_logs = String::from_utf8(output.stdout).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
-    let logs = format!("{}\n{}", stdout_logs, stderr_logs);
 
     let mut metric_results: Option<HashMap<String, models::MetricValue>> = None;
     let potential_toml = workspace.read_string(repository_id, "result/data.toml");
@@ -238,7 +259,7 @@ fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str,
         function_id: code_function.public_id.to_string(),
         repository_id: repository_id.to_string(),
         commit,
-        has_failed: !output.status.success() ,
+        has_failed,
         logs,
         timing_ms,
         results

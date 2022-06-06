@@ -96,13 +96,20 @@ pub struct CodeFunction {
 
     pub name: String,
 
-    pub environment: FunctionEnv,
-
     pub capabilities: FunctionCapabilities,
 
-    pub content: String,
+    pub outputs: Vec<FunctionOutput>,
 
-    pub outputs: Vec<FunctionOutput>
+    pub stages: Vec<FunctionStage>
+
+}
+
+#[derive(Deserialize)]
+pub struct FunctionStage {
+
+    pub environment: FunctionEnv,
+
+    pub content: String,
 
 }
 
