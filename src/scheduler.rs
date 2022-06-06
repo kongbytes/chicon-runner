@@ -57,6 +57,10 @@ impl Scheduler {
             return Ok(code_functions)
         }
 
+        if let Some("*") = functions.get(0).map(|first| first.as_ref()) {
+            return Ok(code_functions)
+        }
+
         let filtered_functions = code_functions.into_iter()
             .filter(|function| functions.contains(&function.public_id))
             .collect();

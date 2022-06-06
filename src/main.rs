@@ -94,14 +94,14 @@ fn main() -> Result<(), Error> {
                 break;   
             }
             let request = decode_result.unwrap();
-            info!("Received request for repository ID {}", request.repository_id);
+            info!("Received request for repository ID {} (functions {})", request.repository_id, request.functions.join(","));
 
             let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
             let repository = scheduler.get_repository(&request.repository_id).context("Failure when retrieving repository")?;
 
             workspace.clean(&repository.public_id, false)?;
 
-            info!("Starting function on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
+            info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
             let last_commit = repository.pull_or_clone(shared_config.clone())?;
 
             for code_function in code_functions.iter() {
