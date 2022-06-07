@@ -23,12 +23,25 @@ pub struct CodeIssue {
 
     pub name: String,
 
+    pub severity: Option<String>,
+
     #[serde(rename = "repositoryId")]
     pub repository_id: Option<String>,  // Fields are marked as optional since they are being used by TOML
                                         // note that this may cause security issues (TODO)
 
     #[serde(rename = "functionId")]
     pub function_id: Option<String>,
+
+    #[serde(rename = "scanId")]
+    pub scan_id: Option<String>,
+
+}
+
+#[derive(Deserialize)]
+pub struct GenericModel {
+
+    #[serde(rename = "publicId")]
+    pub public_id: Option<String>,
 
 }
 

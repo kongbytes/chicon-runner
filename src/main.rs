@@ -109,8 +109,8 @@ fn main() -> Result<(), Error> {
                 info!("Executing function \"{}\" (ID {})", code_function.name, code_function.public_id);
 
                 let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
-                scheduler.store_scan(finished_scan)?;
-                process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id)?;
+                let scan_id = scheduler.store_scan(finished_scan)?;
+                process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id, &scan_id)?;
             }
 
             workspace.clean(&repository.public_id, false)?;
@@ -272,7 +272,7 @@ struct IssueContainer {
     issues: Vec<CodeIssue>
 }
 
-fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Scheduler, function_id: &str) -> Result<(), Error> {
+fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Scheduler, function_id: &str, scan_id: &str) -> Result<(), Error> {
 
     let potential_issues = workspace.read_string(repository_id, "result/issues.toml");
 
@@ -295,6 +295,8 @@ fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Schedu
             .map(|issue_item| {
                 CodeIssue {
                     name: issue_item.name,
+                    scan_id: Some(scan_id.to_string()),
+                    severity: issue_item.severity,
                     repository_id: Some(repository_id.to_string()),
                     function_id: Some(function_id.to_string())
                 }

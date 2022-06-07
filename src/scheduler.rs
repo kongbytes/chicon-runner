@@ -4,7 +4,7 @@ use std::rc::Rc;
 use anyhow::Error;
 use isahc::{prelude::*, Request};
 
-use crate::models::{CodeFunction, Repository, Scan, CodeIssue};
+use crate::models::{CodeFunction, Repository, Scan, CodeIssue, GenericModel};
 use crate::config::Config;
 
 pub struct Scheduler {
@@ -67,19 +67,21 @@ impl Scheduler {
         Ok(filtered_functions)
     }
 
-    pub fn store_scan(&self, scan: Scan) -> Result<(), Error> {
+    pub fn store_scan(&self, scan: Scan) -> Result<String, Error> {
 
         let scan_url = format!("{}/scans", self.base_url);
         let request_body = serde_json::to_string(&scan)?;
 
-        Request::post(&scan_url)    // TODO Check that failed HTTP status codes are processed
+        let scan_response = Request::post(&scan_url)    // TODO Check that failed HTTP status codes are processed
             .header("Content-Type", "application/json")
             .header("Authorization", self.authorization_value())
             .timeout(self.default_duration)
             .body(request_body)?
-            .send()?;
+            .send()?
+            .json::<GenericModel>()?;
 
-        Ok(())
+        // TODO
+        Ok(scan_response.public_id.unwrap_or("-".to_string()))
     }
 
     pub fn store_issue(&self, issue: Vec<CodeIssue>) -> Result<(), Error> {
