@@ -110,7 +110,7 @@ fn main() -> Result<(), Error> {
 
                 let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
                 scheduler.store_scan(finished_scan)?;
-                process_issues(&workspace, &repository.public_id, &scheduler)?;
+                process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id)?;
             }
 
             workspace.clean(&repository.public_id, false)?;
@@ -272,7 +272,7 @@ struct IssueContainer {
     issues: Vec<CodeIssue>
 }
 
-fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Scheduler) -> Result<(), Error> {
+fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Scheduler, function_id: &str) -> Result<(), Error> {
 
     let potential_issues = workspace.read_string(repository_id, "result/issues.toml");
 
@@ -281,21 +281,26 @@ fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Schedu
         let mut issue_list: Vec<CodeIssue> = vec![];
         let parsed_toml: Result<IssueContainer, toml::de::Error> = toml::from_str(&vulnerabilities_content);
 
-        if let Ok(toml_results) = parsed_toml {
-            issue_list = toml_results.issues;
-        }
-        else {
-            // TODO TOML error handling
-            error!("Could not parse issue TOML for repository {}", repository_id);
-        }
+        match parsed_toml {
+            Ok(toml_results) => {
+                issue_list = toml_results.issues;
+            },
+            Err(err) => {
+                error!("Could not parse issue TOML for repository {}", repository_id);
+                dbg!(err);
+            }
+        };
 
-        for issue_item in issue_list {
-
-            scheduler.store_issue(CodeIssue {
-                name: issue_item.name,
-                repository_id: Some(repository_id.to_string())
-            })?;
-        }
+        let formatted_issues = issue_list.into_iter()
+            .map(|issue_item| {
+                CodeIssue {
+                    name: issue_item.name,
+                    repository_id: Some(repository_id.to_string()),
+                    function_id: Some(function_id.to_string())
+                }
+            })
+            .collect();
+        scheduler.store_issue(formatted_issues)?;
     }
     else {
         info!("No issues found linked to repository ID {}", repository_id);

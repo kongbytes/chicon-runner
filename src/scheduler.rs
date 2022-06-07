@@ -82,7 +82,7 @@ impl Scheduler {
         Ok(())
     }
 
-    pub fn store_issue(&self, issue: CodeIssue) -> Result<(), Error> {
+    pub fn store_issue(&self, issue: Vec<CodeIssue>) -> Result<(), Error> {
 
         let report_url = format!("{}/issues", self.base_url);
         let request_body = serde_json::to_string(&issue)?;
