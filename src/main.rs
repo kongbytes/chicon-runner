@@ -1,11 +1,12 @@
 mod config;
+mod cli;
 mod models;
 mod scheduler;
 mod workspace;
 mod utils;
 
 use std::collections::HashMap;
-use std::process::Command;
+use std::process::{self, Command};
 use std::time::{SystemTime, Duration};
 use std::rc::Rc;
 use std::net::TcpStream;
@@ -18,15 +19,39 @@ use url::Url;
 use serde::Deserialize;
 
 use config::Config;
+use cli::build_cli;
 use models::{CodeFunction, Scan, ScanMetadata, CodeIssue};
 use scheduler::Scheduler;
 use workspace::Workspace;
 
 fn main() -> Result<(), Error> {
 
+    let matches = build_cli().get_matches();
+
+    match matches.subcommand() {
+        Some(("run", sub_matches)) => {
+
+            let config_path = sub_matches.get_one::<String>("config").unwrap_or_else(|| {
+                eprint!("Could not extract configuration path");
+                process::exit(1);
+            });
+            launch_runner(config_path).unwrap();
+
+        },
+        _ => unreachable!()
+    }
+
+    Ok(())
+}
+
+fn launch_runner(config_path: &str) -> Result<(), Error> {
+
     env_logger::init();
 
-    let config = Config::parse("./data/config.toml")?;
+    let config = Config::parse(config_path).unwrap_or_else(|err| {
+        error!("Could not read or parse config file {} ({})", config_path, err);
+        process::exit(1);
+    });
     let shared_config = Rc::new(config);
     let workspace = Workspace::new(shared_config.clone());
     let scheduler = Scheduler::new(shared_config.clone());
@@ -65,13 +90,16 @@ fn main() -> Result<(), Error> {
                 }
             };
 
-            if is_connected {
+            if is_connected && some_websocket.is_some() {
                 break;
             }
         }
 
         info!("Connected to the scheduler, ready to receive requests");
-        let mut websocket = some_websocket.unwrap();
+        let mut websocket = some_websocket.unwrap_or_else(|| {
+            error!("Expected a valid websocket, internal logic error");
+            process::exit(1);
+        });
 
         loop {
 
@@ -86,18 +114,31 @@ fn main() -> Result<(), Error> {
 
                 break;
             }
-            let raw_message = socket_read_result.unwrap();
+            let raw_message = socket_read_result.unwrap_or_else(|err| {
+                error!("Expected a valid message, internal logic error ({})", err);
+                process::exit(1);
+            });
 
             let decode_result = decode_message(raw_message);
             if decode_result.is_err() {
                 error!("Could not read text message from socket");
                 break;   
             }
-            let request = decode_result.unwrap();
-            info!("Received request for repository ID {} (functions {})", request.repository_id, request.functions.join(","));
+            let request = decode_result.unwrap_or_else(|err| {
+                error!("Expected a decoded message, internal logic error ({})", err);
+                process::exit(1);
+            });
+            let repository_id = if let Some(repository_id) = request.repositories.get(0) {
+                repository_id
+            }
+            else {
+                error!("Could not find repository to scan");
+                break;   
+            };
+            info!("Received request for repository ID {} (functions {})", repository_id, request.functions.join(","));
 
             let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
-            let repository = scheduler.get_repository(&request.repository_id).context("Failure when retrieving repository")?;
+            let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
 
             workspace.clean(&repository.public_id, false)?;
 
@@ -121,7 +162,7 @@ fn main() -> Result<(), Error> {
 
 struct ScanRequest {
     _version: String,
-    repository_id: String,
+    repositories: Vec<String>,
     functions: Vec<String>
 }
 
@@ -130,21 +171,36 @@ fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Erro
     if let Err(text_error) = raw_message.to_text() {
         bail!(text_error);
     }
+    let runner_command: &str = raw_message.to_text()?;
 
     // TODO Make messsage parse below (v1;repos;functions) more effective
     // and resilient against crashes (does not handle multiple repos, version
     // control and function selection).
-    let runner_command: &str = raw_message.to_text().unwrap();
+    
     let message_parts: Vec<&str> = runner_command.split(';').collect();
-    let repository_id = message_parts.get(1).unwrap().to_string();
-    let functions: Vec<String> = message_parts.get(2).unwrap()
+    if message_parts.len() != 3 {
+        bail!("Scan message should have 3 components, {} found ({})", message_parts.len(), runner_command);
+    }
+
+    let version = message_parts.get(0)
+        .map(|m| m.to_string())
+        .unwrap_or_default();
+    if version != "v1" {
+        bail!("Expected 'v1' scan message");
+    }
+
+    let repositories: Vec<String> = message_parts.get(1).unwrap_or(&"")
+        .split(',')
+        .map(|m| m.to_string())
+        .collect();
+    let functions: Vec<String> = message_parts.get(2).unwrap_or(&"")
         .split(',')
         .map(|m| m.to_string())
         .collect();
 
     let scan_request = ScanRequest {
-        _version: message_parts.get(0).unwrap_or(&"v1").to_string(),
-        repository_id,
+        _version: version,
+        repositories,
         functions
     };
     Ok(scan_request)
