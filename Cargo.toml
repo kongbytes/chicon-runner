@@ -1,9 +1,11 @@
 [package]
-name = "engine"
+name = "chicon-runner"
+description = "Chicon runner for code scans"
+license = "AGPL-3.0-or-later"
 version = "0.1.0"
+authors = ["Saluki"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+keywords = ["chicon", "runner", "sast", "security"]
 
 [dependencies]
 
