@@ -6,7 +6,7 @@ cache_limit = "20" # Mb
 
 [scheduler]
 base_url = "localhost:3000"
-token = "secret"
+token = "a95bdaa3-00c9-4b4a-9593-8e6625430273"
 retry_period = 5 # Seconds
 
 [container]

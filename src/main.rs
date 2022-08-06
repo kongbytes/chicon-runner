@@ -24,6 +24,8 @@ use models::{CodeFunction, Scan, ScanMetadata, CodeIssue};
 use scheduler::Scheduler;
 use workspace::Workspace;
 
+type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
+
 fn main() -> Result<(), Error> {
 
     let matches = build_cli().get_matches();
@@ -42,6 +44,28 @@ fn main() -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+fn authenticate_runner(shared_config: Rc<Config>, websocket: &mut Ws) -> () {
+
+    websocket.write_message(tungstenite::Message::Text(shared_config.scheduler.token.to_string())).unwrap_or_else(|err| {
+        error!("Could not send authentication request, check the network connection ({})", err);
+        process::exit(1);
+    });
+    let auth_response = websocket.read_message().unwrap_or_else(|err| {
+        error!("Could not receive authentication response, check the network connection ({})", err);
+        process::exit(1);
+    });
+
+    match auth_response.to_text() {
+        Ok("auth-ok") => {
+            info!("Authentication done, the runner is ready to perform scans");
+        }
+        _ => {
+            error!("Authentication failed, check the runner token");
+            process::exit(1);
+        }
+    }
 }
 
 fn launch_runner(config_path: &str) -> Result<(), Error> {
@@ -64,7 +88,7 @@ fn launch_runner(config_path: &str) -> Result<(), Error> {
 
     loop {
 
-        let mut some_websocket: Option<WebSocket<MaybeTlsStream<TcpStream>>> = None;
+        let mut some_websocket: Option<Ws> = None;
 
         // Perform scheduler connect attempts in this loop, this enables the
         // runner to be more resilient against scheduler crashes.
@@ -95,11 +119,13 @@ fn launch_runner(config_path: &str) -> Result<(), Error> {
             }
         }
 
-        info!("Connected to the scheduler, ready to receive requests");
+        info!("Connected to the scheduler, sending authentication request");
         let mut websocket = some_websocket.unwrap_or_else(|| {
             error!("Expected a valid websocket, internal logic error");
             process::exit(1);
         });
+
+        authenticate_runner(shared_config.clone(), &mut websocket);
 
         loop {
 
