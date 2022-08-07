@@ -7,7 +7,6 @@ pub fn build_cli() -> Command<'static> {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
-
             Command::new("run")
                 .about("Start the runner in server mode")
                 .arg(
@@ -18,5 +17,9 @@ pub fn build_cli() -> Command<'static> {
                         .default_value("config.toml")
                         .takes_value(true)
                 )
+        )
+        .subcommand(
+            Command::new("check")
+                .about("Perform a runner health check")
         )
 }
