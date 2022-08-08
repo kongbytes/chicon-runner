@@ -2,6 +2,8 @@
 # Setup containrd as root with SH script
 # CGROUPv2 not required now
 
+https://qiita.com/liubin/items/6c94f0b61f746c08b74c
+
 # Download CNI plugins
 https://github.com/containernetworking/plugins/releases/tag/v1.0.1
 # Put them in /opt/cni/bin

@@ -37,6 +37,14 @@ pub struct CodeIssue {
 
 }
 
+#[derive(Serialize)]
+pub struct MassIssues {
+
+    pub issues: Vec<CodeIssue>
+
+}
+
+
 #[derive(Deserialize)]
 pub struct GenericModel {
 
