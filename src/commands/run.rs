@@ -78,6 +78,68 @@ fn authenticate_runner(shared_config: Rc<Config>, websocket: &mut Ws) {
     }
 }
 
+fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<Scheduler>, workspace: Rc<Workspace>) -> Result<(), Error> {
+
+    let socket_read_result = websocket.read_message();
+
+    if let Err(read_error) = socket_read_result {
+
+        error!("Failed to read messages from scheduler: {}", read_error);
+
+        let duration = Duration::from_secs(shared_config.scheduler.retry_period);
+        thread::sleep(duration);
+
+        return Ok(());
+    }
+    let raw_message = socket_read_result.unwrap_or_else(|err| {
+        error!("Expected a valid message, internal logic error ({})", err);
+        process::exit(1);
+    });
+
+    let decode_result = decode_message(raw_message);
+    if decode_result.is_err() {
+        error!("Could not read text message from socket");
+        return Ok(()); 
+    }
+    let request = decode_result.unwrap_or_else(|err| {
+        error!("Expected a decoded message, internal logic error ({})", err);
+        process::exit(1);
+    });
+    let repository_id = if let Some(repository_id) = request.repositories.get(0) {
+        repository_id
+    }
+    else {
+        error!("Could not find repository to scan");
+        return Ok(());  
+    };
+    info!("Received request for repository ID {} (functions {})", repository_id, request.functions.join(","));
+
+    let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
+    let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
+
+    workspace.clean(&repository.public_id, false)?;
+
+    info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
+    
+    // TODO This should not fail runner
+    let last_commit = repository.pull_or_clone(shared_config.clone())?;
+
+    for code_function in code_functions.iter() {
+
+        info!("Executing function \"{}\" (ID {})", code_function.name, code_function.public_id);
+
+        let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
+        let scan_id = scheduler.store_scan(finished_scan)?;
+        process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id, &scan_id)?;
+    }
+
+    // TODO This should not fail runner
+    workspace.clean(&repository.public_id, false)?;
+    workspace.prune_storage()?;
+
+    Ok(())
+}
+
 pub fn launch_runner(config_path: &str) -> Result<(), Error> {
 
     env_logger::init();
@@ -89,9 +151,12 @@ pub fn launch_runner(config_path: &str) -> Result<(), Error> {
     let shared_config = Rc::new(config);
 
     let workspace = Workspace::new(shared_config.clone());
-    let scheduler = Scheduler::new(shared_config.clone());
+    let shared_workspace = Rc::new(workspace);
 
-    let storage_mb = workspace.get_total_usage()? / 1_000_000;
+    let scheduler = Scheduler::new(shared_config.clone());
+    let shared_scheduler = Rc::new(scheduler);
+
+    let storage_mb = shared_workspace.get_total_usage()? / 1_000_000;
     info!("Workspace usage is currently {}Mb ({}Mb limit)", storage_mb, shared_config.workspace.cache_limit);
 
     let websocker_raw_url = format!("ws://{}/ws/runners", shared_config.scheduler.base_url);
@@ -105,61 +170,11 @@ pub fn launch_runner(config_path: &str) -> Result<(), Error> {
         authenticate_runner(shared_config.clone(), &mut websocket);
 
         loop {
-
-            let socket_read_result = websocket.read_message();
-
-            if let Err(read_error) = socket_read_result {
-
-                error!("Failed to read messages from scheduler: {}", read_error);
-
-                let duration = Duration::from_secs(shared_config.scheduler.retry_period);
-                thread::sleep(duration);
-
-                break;
-            }
-            let raw_message = socket_read_result.unwrap_or_else(|err| {
-                error!("Expected a valid message, internal logic error ({})", err);
-                process::exit(1);
+            process_message(&mut websocket, shared_config.clone(), shared_scheduler.clone(), shared_workspace.clone()).unwrap_or_else(|err| {
+                error!("Could not process message, {}", err);
             });
-
-            let decode_result = decode_message(raw_message);
-            if decode_result.is_err() {
-                error!("Could not read text message from socket");
-                break;   
-            }
-            let request = decode_result.unwrap_or_else(|err| {
-                error!("Expected a decoded message, internal logic error ({})", err);
-                process::exit(1);
-            });
-            let repository_id = if let Some(repository_id) = request.repositories.get(0) {
-                repository_id
-            }
-            else {
-                error!("Could not find repository to scan");
-                break;   
-            };
-            info!("Received request for repository ID {} (functions {})", repository_id, request.functions.join(","));
-
-            let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
-            let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
-
-            workspace.clean(&repository.public_id, false)?;
-
-            info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
-            let last_commit = repository.pull_or_clone(shared_config.clone())?;
-
-            for code_function in code_functions.iter() {
-
-                info!("Executing function \"{}\" (ID {})", code_function.name, code_function.public_id);
-
-                let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
-                let scan_id = scheduler.store_scan(finished_scan)?;
-                process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id, &scan_id)?;
-            }
-
-            workspace.clean(&repository.public_id, false)?;
-            workspace.prune_storage()?;
         }
+
     }
 }
 

@@ -42,7 +42,7 @@ impl Scheduler {
         Ok(code_functions)
     }
 
-    pub fn get_functions(&self, functions: &Vec<String>) -> Result<Vec<CodeFunction>, Error> {
+    pub fn get_functions(&self, functions: &[String]) -> Result<Vec<CodeFunction>, Error> {
 
         let functions_url = format!("{}/functions", self.base_url);
         let code_functions = Request::get(&functions_url)
@@ -81,7 +81,7 @@ impl Scheduler {
             .json::<GenericModel>()?;
 
         // TODO
-        Ok(scan_response.public_id.unwrap_or("-".to_string()))
+        Ok(scan_response.public_id.unwrap_or_else(|| "-".to_string()))
     }
 
     pub fn store_issue(&self, issues: Vec<CodeIssue>) -> Result<(), Error> {
