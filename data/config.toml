@@ -3,6 +3,7 @@
 [workspace]
 path = "/home/corentin/workspace/chicon-runner/workspace"
 cache_limit = "20" # Mb
+ssh_clone_key = "/home/corentin/.ssh/chicon-runner"
 
 [scheduler]
 base_url = "localhost:3000"

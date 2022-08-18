@@ -9,7 +9,9 @@ pub struct ConfigWorkspace {
 
     pub path: String,
 
-    pub cache_limit: String
+    pub cache_limit: String,
+
+    pub ssh_clone_key: Option<String>
 
 }
 

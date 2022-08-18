@@ -1,7 +1,8 @@
-use std::path::Path;
+use std::{path::Path};
 use std::rc::Rc;
 
 use anyhow::{bail, Error};
+use git2::{RemoteCallbacks, Cred};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -233,9 +234,29 @@ impl Repository {
             let commit = existing.find_commit(fetch_commit.id())?;
             return Ok(commit.into())
         }
-        
 
-        let cloned = git2::Repository::clone(&self.url, repository_path)?;
+        // Prepare builder.
+        let mut builder = git2::build::RepoBuilder::new();
+
+        if let Some(ssh_clone_key) = &config.workspace.ssh_clone_key {
+        
+            // Prepare callbacks.
+            let mut callbacks = RemoteCallbacks::new();
+            callbacks.credentials(|_url, username_from_url, _allowed_types| {
+                Cred::ssh_key(
+                    username_from_url.unwrap_or("git"), None,
+                    Path::new(ssh_clone_key), None
+                )
+            });
+
+            // Prepare fetch options.
+            let mut fo = git2::FetchOptions::new();
+            fo.remote_callbacks(callbacks);
+            builder.fetch_options(fo);
+
+        }
+
+        let cloned = builder.clone(&self.url, &repository_path)?;
 
         let fetch_head = cloned.find_reference("HEAD")?;
         let fetch_commit = cloned.reference_to_annotated_commit(&fetch_head)?;
