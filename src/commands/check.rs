@@ -5,14 +5,18 @@ use log::error;
 
 use crate::config::Config;
 
-pub fn run_check() {
+pub fn run_check(config_path: &str) {
 
-    // TODO
-    let config = Config::parse("./data/config.toml").unwrap_or_else(|err| {
-        error!("Could not read or parse config file ({})", err);
+    println!();
+    println!("Starting Chicon runner health checks");
+    println!();
+
+    let config = Config::parse(config_path).unwrap_or_else(|err| {
+        error!("FAIL, could not read or parse config file ({})", err);
         process::exit(1);
     });
-    
+    println!("OK, valid configuration file found");
+
     let namespace_arg = format!("--namespace={}", config.container.namespace);
     let process_result = Command::new("nerdctl")
         .arg(namespace_arg)
@@ -20,13 +24,18 @@ pub fn run_check() {
         .stdout(Stdio::null())
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .expect("Should run nerdctl command");
+        .status();
 
-    if process_result.success() {
-        println!("OK");
+    let exit_status = process_result.unwrap_or_else(|err| {
+        error!("FAIL, could not launch the 'nerdctl' binary and execute a 'ps' command ({})", err);
+        process::exit(1);
+    });
+    if !exit_status.success() {
+        error!("FAIL, could not launch the 'nerdctl' binary and execute a 'ps' command (status {})", exit_status);
+        process::exit(1);
     }
-    else {
-        println!("Fail");
-    }
+    println!("OK, nerdctl binary launched");
+
+    println!();
+
 }

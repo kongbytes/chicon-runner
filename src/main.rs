@@ -6,11 +6,10 @@ mod workspace;
 mod utils;
 mod commands;
 
-use std::process;
-
 use anyhow::{Error, Result};
 
 use cli::build_cli;
+use utils::assert_config_path;
 
 fn main() -> Result<(), Error> {
 
@@ -19,18 +18,20 @@ fn main() -> Result<(), Error> {
     match matches.subcommand() {
         Some(("run", sub_matches)) => {
 
-            let config_path = sub_matches.get_one::<String>("config").unwrap_or_else(|| {
-                eprint!("Could not extract configuration path");
-                process::exit(1);
-            });
+            let requested_config = sub_matches.get_one::<String>("config");
+            let config_path = assert_config_path(requested_config);
+
             commands::run::launch_runner(config_path).unwrap();
 
         },
-        Some(("check", _sub_matches)) => {
+        Some(("check", sub_matches)) => {
 
-            commands::check::run_check();
+            let requested_config = sub_matches.get_one::<String>("config");
+            let config_path = assert_config_path(requested_config);
 
-        }
+            commands::check::run_check(config_path);
+
+        },
         _ => unreachable!()
     }
 

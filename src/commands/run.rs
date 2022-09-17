@@ -121,7 +121,6 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
 
     info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
     
-    // TODO This should not fail runner
     let last_commit = repository.pull_or_clone(shared_config.clone())?;
 
     for code_function in code_functions.iter() {
@@ -133,7 +132,6 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
         process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id, &scan_id)?;
     }
 
-    // TODO This should not fail runner
     workspace.clean(&repository.public_id, false)?;
     workspace.prune_storage()?;
 

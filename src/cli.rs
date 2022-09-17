@@ -14,12 +14,18 @@ pub fn build_cli() -> Command<'static> {
                         .short('c')
                         .long("config")
                         .help("Config file path")
-                        .default_value("config.toml")
                         .takes_value(true)
                 )
         )
         .subcommand(
             Command::new("check")
                 .about("Perform a runner health check")
+                .arg(
+                    Arg::new("config")
+                        .short('c')
+                        .long("config")
+                        .help("Config file path")
+                        .takes_value(true)
+                )
         )
 }
