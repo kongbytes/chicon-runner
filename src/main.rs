@@ -6,6 +6,8 @@ mod workspace;
 mod utils;
 mod commands;
 
+use std::process;
+
 use anyhow::{Error, Result};
 
 use cli::build_cli;
@@ -21,7 +23,11 @@ fn main() -> Result<(), Error> {
             let requested_config = sub_matches.get_one::<String>("config");
             let config_path = assert_config_path(requested_config);
 
-            commands::run::launch_runner(config_path).unwrap();
+            commands::run::launch_runner(config_path).unwrap_or_else(|err| {
+                eprintln!("Chicon runner process failed due to fatal error");
+                eprintln!("{}", err);
+                process::exit(1);
+            });
 
         },
         Some(("check", sub_matches)) => {

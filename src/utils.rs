@@ -2,8 +2,8 @@ use std::{time::SystemTime, path::Path, process};
 
 use anyhow::Error;
 
-const GLOBAL_CONFIG_PATH: &'static str = "/etc/chicon/runner.toml";
-const LOCAL_CONFIG: &'static str = "./runner.toml";
+const GLOBAL_CONFIG_PATH: &str = "/etc/chicon/runner.toml";
+const LOCAL_CONFIG: &str = "./runner.toml";
 
 // Compute a time diff with milliseconds
 pub fn compute_time_diff(start_time: SystemTime) -> Result<usize, Error> {
