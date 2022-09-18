@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::Error;
 use fs_extra::dir::get_size;
-use log::{warn};
+use log::warn;
 
 use crate::config::Config;
 

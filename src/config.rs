@@ -22,7 +22,11 @@ pub struct ConfigScheduler {
 
     pub token: String,
 
-    pub retry_period: u64
+    pub retry_period: u64,
+
+    pub retry_scale_factor: f32,
+
+    pub retry_scale_limit: u64
 
 }
 

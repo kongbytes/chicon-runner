@@ -9,6 +9,8 @@ ssh_clone_key = "/home/corentin/.ssh/chicon-runner"
 base_url = "localhost:3000"
 token = "a95bdaa3-00c9-4b4a-9593-8e6625430273"
 retry_period = 5 # Seconds
+retry_scale_factor = 1.25
+retry_scale_limit = 30 # Seconds
 
 [container]
 namespace = "kb"

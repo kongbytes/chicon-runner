@@ -19,10 +19,14 @@ use crate::workspace::Workspace;
 type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
 
 /// Try to perform a websocket connection with the scheduler
-fn try_connection(shared_config: Rc<Config>, websocket_url: &Url) -> Ws {
+fn try_scheduler_ws_connection(shared_config: Rc<Config>, websocket_url: &Url) -> Ws {
 
     let mut some_websocket: Option<Ws> = None;
 
+    let mut retry_period = shared_config.scheduler.retry_period;
+    let retry_scale_factor = shared_config.scheduler.retry_scale_factor;
+    let retry_scale_limit = shared_config.scheduler.retry_scale_limit;
+    
     loop {
 
         let mut is_connected = false;
@@ -37,10 +41,14 @@ fn try_connection(shared_config: Rc<Config>, websocket_url: &Url) -> Ws {
             Err(err) => {
 
                 error!("Scheduler connection failed: {}", err);
-                error!("Retry in {} seconds", shared_config.scheduler.retry_period);
+                error!("Retry in {} seconds", retry_period);
 
-                let duration = Duration::from_secs(shared_config.scheduler.retry_period);
+                let duration = Duration::from_secs(retry_period);
                 thread::sleep(duration);
+
+                if retry_period < retry_scale_limit {
+                    retry_period = ((retry_period as f32) * retry_scale_factor).round() as u64;
+                }
 
             }
         };
@@ -151,18 +159,18 @@ pub fn launch_runner(config_path: &str) -> Result<(), Error> {
     let workspace = Workspace::new(shared_config.clone());
     let shared_workspace = Rc::new(workspace);
 
+    let storage_mb = shared_workspace.get_total_usage()? / 1_000_000;
+    info!("Workspace usage is currently {}Mb ({}Mb cleaning threshold)", storage_mb, shared_config.workspace.cache_limit);
+
     let scheduler = Scheduler::new(shared_config.clone());
     let shared_scheduler = Rc::new(scheduler);
-
-    let storage_mb = shared_workspace.get_total_usage()? / 1_000_000;
-    info!("Workspace usage is currently {}Mb ({}Mb limit)", storage_mb, shared_config.workspace.cache_limit);
 
     let websocker_raw_url = format!("ws://{}/ws/runners", shared_config.scheduler.base_url);
     let websocket_url = Url::parse(&websocker_raw_url)?;
 
     loop {
 
-        let mut websocket = try_connection(shared_config.clone(), &websocket_url);       
+        let mut websocket = try_scheduler_ws_connection(shared_config.clone(), &websocket_url);       
         info!("Connected to the scheduler, sending authentication request");
 
         authenticate_runner(shared_config.clone(), &mut websocket);
