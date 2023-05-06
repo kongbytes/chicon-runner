@@ -42,7 +42,7 @@ pub fn assert_config_path(requested_path: Option<&String>) -> &str {
         return LOCAL_CONFIG;
     }
   
-    eprintln!("Chicon runner configuration not found");
+    eprintln!("Chicon runner configuration not found in {} or {}", GLOBAL_CONFIG_PATH, LOCAL_CONFIG);
     eprintln!("Provide a configuration file with the --config option");
     process::exit(1);
 }
