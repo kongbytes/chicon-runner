@@ -1,5 +1,8 @@
 # Chicon runner
 
+[![Build Status](https://saluki.semaphoreci.com/badges/chicon-runner/branches/master.svg?style=shields)](https://saluki.semaphoreci.com/projects/chicon-runner)
+[![dependency status](https://deps.rs/repo/github/kongbytes/chicon-runner/status.svg)](https://deps.rs/repo/github/kongbytes/chicon-runner)
+
 This runner is part of the Chicon project and performs code scans in containers based on Chicon scheduler requests. The runner is written in Rust and uses rootless `nerdctl` for secure container management.
 
 ## Requirements
