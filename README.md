@@ -39,6 +39,27 @@ chicon-runner run
 
 The runner should now be marked as active in the Chicon settings page.
 
+## How it works
+
+A basic runner register process can be found below. The "User" represents an end-user with access to the Chicon control plane settings. The "Control" represents a running instance of the Chicon control plane & scheduler. 
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Control
+    participant Runner
+    User->>+Control: Register a new runner in settings
+    activate Control
+    Control-->>User: Receive token X
+    deactivate Control
+    Note over User,Control: User provides token to the runner 
+    Runner->>Control: Authenticate with token X
+    activate Control
+    Control->>Runner: Send scan request A 
+    Control->>Runner: Send scan request B
+    deactivate Control
+```
+
 ## Configuration
 
 The Chicon runner will try to build a configuration by performing a lookup process:
