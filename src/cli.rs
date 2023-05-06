@@ -1,6 +1,6 @@
 use clap::{Arg, Command};
 
-pub fn build_cli() -> Command<'static> {
+pub fn build_cli() -> Command {
 
     Command::new("chicon-runner")
         .about("Chicon code runner")
@@ -14,7 +14,6 @@ pub fn build_cli() -> Command<'static> {
                         .short('c')
                         .long("config")
                         .help("Config file path")
-                        .takes_value(true)
                 )
         )
         .subcommand(
@@ -25,7 +24,6 @@ pub fn build_cli() -> Command<'static> {
                         .short('c')
                         .long("config")
                         .help("Config file path")
-                        .takes_value(true)
                 )
         )
 }
