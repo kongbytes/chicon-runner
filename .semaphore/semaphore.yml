@@ -3,7 +3,7 @@ name: Rust
 
 agent:
   machine:
-    type: e1-standard-2
+    type: e2-standard-2
     os_image: ubuntu2204
 
 blocks:
