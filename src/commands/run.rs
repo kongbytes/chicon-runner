@@ -6,12 +6,12 @@ use std::net::TcpStream;
 use std::thread;
 
 use anyhow::{bail, Context, Error, Result};
-use log::{info, error};
+use log::{info, error, warn};
 use tungstenite::{connect, WebSocket, stream::MaybeTlsStream};
 use url::Url;
 use serde::Deserialize;
 
-use crate::config::Config;
+use crate::config::{Config, TOKEN_ENV};
 use crate::models::{CodeFunction, Scan, ScanMetadata, CodeIssue};
 use crate::scheduler::Scheduler;
 use crate::workspace::Workspace;
@@ -146,26 +146,48 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
     Ok(())
 }
 
-pub fn launch_runner(config_path: &str) -> Result<(), Error> {
+pub fn launch_runner(config_path: Option<&str>) -> Result<(), Error> {
 
     env_logger::init();
 
-    let config = Config::parse(config_path).unwrap_or_else(|err| {
-        error!("Could not read or parse config file {} ({})", config_path, err);
-        process::exit(1);
-    });
+    let config = match config_path {
+        Some(path) => {
+    
+            info!("Loading TOML runner configuration from {}", path);
+            Config::parse(path).unwrap_or_else(|err| {
+                error!("Could not read or parse config file {} ({})", path, err);
+                process::exit(1);
+            })
+  
+        },
+        None => {
+            warn!("Using default runner configuration - this is not recommended for production");
+            Config::default()
+        }
+    };
+
+    if config.scheduler.token.is_empty() {
+        warn!("Runner token is empty, provide environment {} with authentication token", TOKEN_ENV);
+    }
+
     let shared_config = Rc::new(config);
 
     let workspace = Workspace::new(shared_config.clone());
     let shared_workspace = Rc::new(workspace);
+    info!("Initialized workspace in '{}' path, performing storage check", shared_config.workspace.path);
 
-    let storage_mb = shared_workspace.get_total_usage()? / 1_000_000;
-    info!("Workspace usage is currently {}Mb ({}Mb cleaning threshold)", storage_mb, shared_config.workspace.cache_limit);
+    let storage_usage = shared_workspace.get_total_usage().map_err(|err| {
+        error!("Failure on storage, could not compute size of '{}' path", shared_config.workspace.path);
+        err
+    })?;
+    let storage_mb = storage_usage / 1_000_000;
+    info!("Workspace usage is currently {}Mb ({}Mb threshold before cleaning)", storage_mb, shared_config.workspace.cache_limit);
 
     let scheduler = Scheduler::new(shared_config.clone());
     let shared_scheduler = Rc::new(scheduler);
 
     let websocker_raw_url = format!("ws://{}/ws/runners", shared_config.scheduler.base_url);
+    info!("Attempting connection on control plane ({})", websocker_raw_url);
     let websocket_url = Url::parse(&websocker_raw_url)?;
 
     loop {
@@ -202,7 +224,7 @@ fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Erro
         bail!("Scan message should have 3 components, {} found ({})", message_parts.len(), runner_command);
     }
 
-    let version = message_parts.get(0)
+    let version = message_parts.first()
         .map(|m| m.to_string())
         .unwrap_or_default();
     if version != "v1" {

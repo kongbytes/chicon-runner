@@ -16,8 +16,8 @@ pub fn compute_time_diff(start_time: SystemTime) -> Result<usize, Error> {
     Ok(computed_diff)
 }
 
-/// Asserts that a provided configuration file exists
-pub fn assert_config_path(requested_path: Option<&String>) -> &str {
+/// Find a default config path
+pub fn find_default_config(requested_path: Option<&String>) -> Option<&str> {
 
     if let Some(path) = requested_path {
 
@@ -29,20 +29,19 @@ pub fn assert_config_path(requested_path: Option<&String>) -> &str {
             process::exit(1);
         }
 
-        return path;
+        return Some(path);
     }
 
     let global_config = Path::new(GLOBAL_CONFIG_PATH);
     if global_config.exists() {
-        return GLOBAL_CONFIG_PATH;
+        return Some(GLOBAL_CONFIG_PATH);
     }
 
     let local_config = Path::new(LOCAL_CONFIG);
     if local_config.exists() {
-        return LOCAL_CONFIG;
+        return Some(LOCAL_CONFIG);
     }
   
-    eprintln!("Chicon runner configuration not found in {} or {}", GLOBAL_CONFIG_PATH, LOCAL_CONFIG);
-    eprintln!("Provide a configuration file with the --config option");
-    process::exit(1);
+    None
+    
 }

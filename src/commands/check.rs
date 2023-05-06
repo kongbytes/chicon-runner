@@ -5,17 +5,37 @@ use log::error;
 
 use crate::config::Config;
 
-pub fn run_check(config_path: &str) {
+pub fn run_check(config_path: Option<&str>) {
 
     println!();
     println!("Starting Chicon runner health checks");
+
+    let config = match config_path {
+        Some(path) => {
+    
+            Config::parse(path).unwrap_or_else(|err| {
+                error!("FAIL, could not read or parse config file ({})", err);
+                process::exit(1);
+            })
+  
+        },
+        None => {
+            println!("Using default configuration - this is not recommended for production");
+            Config::default()
+        }
+    };
+    
+    println!();
+    println!("OK, runner configuration is valid");
+
+    check_git_binary();
+    check_nerdctl_binary(&config);
+    
     println!();
 
-    let config = Config::parse(config_path).unwrap_or_else(|err| {
-        error!("FAIL, could not read or parse config file ({})", err);
-        process::exit(1);
-    });
-    println!("OK, valid configuration file found");
+}
+
+fn check_git_binary() -> () {
 
     let git_result = Command::new("git")
         .arg("version")
@@ -33,6 +53,9 @@ pub fn run_check(config_path: &str) {
         process::exit(1);
     }
     println!("OK, git binary launched");
+}
+
+fn check_nerdctl_binary(config: &Config) -> () {
 
     let namespace_arg = format!("--namespace={}", config.container.namespace);
     let process_result = Command::new("nerdctl")
@@ -52,7 +75,4 @@ pub fn run_check(config_path: &str) {
         process::exit(1);
     }
     println!("OK, nerdctl binary launched");
-
-    println!();
-
 }

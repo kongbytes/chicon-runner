@@ -1,13 +1,13 @@
 # This file should always be treated as sensitive (400 permissions at least)
 
 [workspace]
-path = "/home/corentin/workspace/chicon-runner/workspace"
+path = "./workspace"
 cache_limit = "20" # Mb
-ssh_clone_key = "/home/corentin/.ssh/chicon-runner"
+ssh_clone_key = "~/.ssh/chicon-runner"
 
 [scheduler]
 base_url = "localhost:3000"
-token = "c3d43b6f-4d66-46cc-9215-bd59d5d133cd"
+token = "xxx"
 retry_period = 5 # Seconds
 retry_scale_factor = 1.25
 retry_scale_limit = 30 # Seconds
