@@ -8,7 +8,7 @@ use anyhow::Error;
 use fs_extra::dir::get_size;
 use log::warn;
 
-use crate::config::Config;
+use super::config::Config;
 
 const DEFAULT_CACHE: u64 = 100_000_000;
 

@@ -3,7 +3,7 @@ use std::process;
 
 use log::error;
 
-use crate::config::Config;
+use crate::components::config::Config;
 
 pub fn run_check(config_path: Option<&str>) {
 
@@ -35,7 +35,7 @@ pub fn run_check(config_path: Option<&str>) {
 
 }
 
-fn check_git_binary() -> () {
+fn check_git_binary() {
 
     let git_result = Command::new("git")
         .arg("version")
@@ -55,7 +55,7 @@ fn check_git_binary() -> () {
     println!("OK, git binary launched");
 }
 
-fn check_nerdctl_binary(config: &Config) -> () {
+fn check_nerdctl_binary(config: &Config) {
 
     let namespace_arg = format!("--namespace={}", config.container.namespace);
     let process_result = Command::new("nerdctl")

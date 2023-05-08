@@ -4,7 +4,7 @@ use std::{fs, env};
 use anyhow::Error;
 use serde::Deserialize;
 
-pub const TOKEN_ENV: &'static str = "CHICON_TOKEN"; 
+pub const TOKEN_ENV: &str = "CHICON_TOKEN"; 
 
 fn get_default_path() -> String {
     "chicon-workspace".to_string()
@@ -120,7 +120,7 @@ impl Default for ConfigContainer {
 }
 
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct Config {
 
     #[serde(default)]
@@ -150,19 +150,6 @@ impl Config {
 
         let cache_mb: u64 = self.workspace.cache_limit.parse()?;
         Ok(cache_mb * 1_000_000)
-    }
-
-}
-
-impl Default for Config {
-
-    fn default() -> Self {
-
-        Config {
-            workspace: ConfigWorkspace::default(),
-            scheduler: ConfigScheduler::default(),
-            container: ConfigContainer::default(),
-        }
     }
 
 }

@@ -1,10 +1,8 @@
-mod config;
 mod cli;
 mod models;
-mod scheduler;
-mod workspace;
 mod utils;
 mod commands;
+mod components;
 
 use std::process;
 

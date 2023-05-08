@@ -138,10 +138,10 @@ A scan request sent by the Chicon control plane is a websocket message in text f
 [version];[repositories];[functions]
 ```
 
-In the `v1` specification, repositories and functions identifiers are given as a comma-separated list. The message does not contain the repository details and function definitions - the runner will fetch them later using his token and the control plane API.
+In the `v1` specification, a single repository identifier is given alongside function identifiers as a comma-separated list. The message does not contain the repository details and function definitions - the runner will fetch them later using his token and the control plane API.
 
 ```
-v1;repository-a,repository-b;function-c,function-d
+v1;repository;function-c,function-d
 ```
 
 ## Container security

@@ -1,149 +1,31 @@
-use std::collections::HashMap;
-use std::process::{self, Command};
-use std::time::{SystemTime, Duration};
+use std::process;
+use std::time::Duration;
 use std::rc::Rc;
-use std::net::TcpStream;
 use std::thread;
 
 use anyhow::{bail, Context, Error, Result};
 use log::{info, error, warn};
-use tungstenite::{connect, WebSocket, stream::MaybeTlsStream};
 use url::Url;
 use serde::Deserialize;
 
-use crate::config::{Config, TOKEN_ENV};
-use crate::models::{CodeFunction, Scan, ScanMetadata, CodeIssue};
-use crate::scheduler::Scheduler;
-use crate::workspace::Workspace;
+use crate::models::CodeIssue;
+use crate::components::{
+    scheduler::{authenticate_runner, Scheduler, try_scheduler_ws_connection, Ws},
+    workspace::Workspace,
+    config::{Config, TOKEN_ENV},
+    container::run_container
+};
 
-type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
-
-/// Try to perform a websocket connection with the scheduler
-fn try_scheduler_ws_connection(shared_config: Rc<Config>, websocket_url: &Url) -> Ws {
-
-    let mut some_websocket: Option<Ws> = None;
-
-    let mut retry_period = shared_config.scheduler.retry_period;
-    let retry_scale_factor = shared_config.scheduler.retry_scale_factor;
-    let retry_scale_limit = shared_config.scheduler.retry_scale_limit;
-    
-    loop {
-
-        let mut is_connected = false;
-
-        match connect(websocket_url) {
-            Ok((socket, _response)) => {
-
-                some_websocket = Some(socket);
-                is_connected = true;
-
-            },
-            Err(err) => {
-
-                error!("Scheduler connection failed: {}", err);
-                error!("Retry in {} seconds", retry_period);
-
-                let duration = Duration::from_secs(retry_period);
-                thread::sleep(duration);
-
-                if retry_period < retry_scale_limit {
-                    retry_period = ((retry_period as f32) * retry_scale_factor).round() as u64;
-                }
-
-            }
-        };
-
-        if is_connected && some_websocket.is_some() {
-            return some_websocket.unwrap_or_else(|| {
-                error!("Expected a valid websocket, internal logic error");
-                process::exit(1);
-            });
-        }
-
-    }
+#[derive(PartialEq, Debug)]
+struct ScanRequest {
+    _version: String,
+    repositories: Vec<String>,
+    functions: Vec<String>
 }
 
-/// Perform an authentication process with the scheduler
-fn authenticate_runner(shared_config: Rc<Config>, websocket: &mut Ws) {
-
-    websocket.write_message(tungstenite::Message::Text(shared_config.scheduler.token.to_string())).unwrap_or_else(|err| {
-        error!("Could not send authentication request, check the network connection ({})", err);
-        process::exit(1);
-    });
-    let auth_response = websocket.read_message().unwrap_or_else(|err| {
-        error!("Could not receive authentication response, check the network connection ({})", err);
-        process::exit(1);
-    });
-
-    match auth_response.to_text() {
-        Ok("auth-ok") => {
-            info!("Authentication done, the runner is ready to perform scans");
-        }
-        _ => {
-            error!("Authentication failed, check the runner token");
-            process::exit(1);
-        }
-    }
-}
-
-fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<Scheduler>, workspace: Rc<Workspace>) -> Result<(), Error> {
-
-    let socket_read_result = websocket.read_message();
-
-    if let Err(read_error) = socket_read_result {
-
-        error!("Failed to read messages from scheduler: {}", read_error);
-
-        let duration = Duration::from_secs(shared_config.scheduler.retry_period);
-        thread::sleep(duration);
-
-        return Ok(());
-    }
-    let raw_message = socket_read_result.unwrap_or_else(|err| {
-        error!("Expected a valid message, internal logic error ({})", err);
-        process::exit(1);
-    });
-
-    let decode_result = decode_message(raw_message);
-    if decode_result.is_err() {
-        error!("Could not read text message from socket");
-        return Ok(()); 
-    }
-    let request = decode_result.unwrap_or_else(|err| {
-        error!("Expected a decoded message, internal logic error ({})", err);
-        process::exit(1);
-    });
-    let repository_id = if let Some(repository_id) = request.repositories.get(0) {
-        repository_id
-    }
-    else {
-        error!("Could not find repository to scan");
-        return Ok(());  
-    };
-    info!("Received request for repository ID {} (functions {})", repository_id, request.functions.join(","));
-
-    let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
-    let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
-
-    workspace.clean(&repository.public_id, false)?;
-
-    info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
-    
-    let last_commit = repository.pull_or_clone(shared_config.clone())?;
-
-    for code_function in code_functions.iter() {
-
-        info!("Executing function \"{}\" (ID {})", code_function.name, code_function.public_id);
-
-        let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
-        let scan_id = scheduler.store_scan(finished_scan)?;
-        process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id, &scan_id)?;
-    }
-
-    workspace.clean(&repository.public_id, false)?;
-    workspace.prune_storage()?;
-
-    Ok(())
+#[derive(Deserialize)]
+struct IssueContainer {
+    issues: Vec<CodeIssue>
 }
 
 pub fn launch_runner(config_path: Option<&str>) -> Result<(), Error> {
@@ -206,17 +88,70 @@ pub fn launch_runner(config_path: Option<&str>) -> Result<(), Error> {
     }
 }
 
-struct ScanRequest {
-    _version: String,
-    repositories: Vec<String>,
-    functions: Vec<String>
+
+fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<Scheduler>, workspace: Rc<Workspace>) -> Result<(), Error> {
+
+    let socket_read_result = websocket.read_message();
+
+    if let Err(read_error) = socket_read_result {
+
+        error!("Failed to read messages from scheduler: {}", read_error);
+
+        let duration = Duration::from_secs(shared_config.scheduler.retry_period);
+        thread::sleep(duration);
+
+        return Ok(());
+    }
+    let raw_message = socket_read_result.unwrap_or_else(|err| {
+        error!("Expected a valid message, internal logic error ({})", err);
+        process::exit(1);
+    });
+
+    let decode_result = decode_message(raw_message);
+    if decode_result.is_err() {
+        error!("Could not read text message from socket");
+        return Ok(()); 
+    }
+    let request = decode_result.unwrap_or_else(|err| {
+        error!("Expected a decoded message, internal logic error ({})", err);
+        process::exit(1);
+    });
+    let repository_id = if let Some(repository_id) = request.repositories.get(0) {
+        repository_id
+    }
+    else {
+        error!("Could not find repository to scan");
+        return Ok(());  
+    };
+    info!("Received request for repository ID {} (functions {})", repository_id, request.functions.join(","));
+
+    let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
+    let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
+
+    workspace.clean(&repository.public_id, false)?;
+
+    info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
+    
+    let last_commit = repository.pull_or_clone(shared_config.clone())?;
+
+    for code_function in code_functions.iter() {
+
+        info!("Executing function \"{}\" (ID {})", code_function.name, code_function.public_id);
+
+        let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
+        let scan_id = scheduler.store_scan(finished_scan)?;
+        process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id, &scan_id)?;
+    }
+
+    workspace.clean(&repository.public_id, false)?;
+    workspace.prune_storage()?;
+
+    Ok(())
 }
 
+/// Decodes a message received by the control plane (websocket)
 fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Error> {
 
-    if let Err(text_error) = raw_message.to_text() {
-        bail!(text_error);
-    }
     let runner_command: &str = raw_message.to_text()?;
 
     let message_parts: Vec<&str> = runner_command.split(';').collect();
@@ -231,143 +166,29 @@ fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Erro
         bail!("Expected 'v1' scan message");
     }
 
-    let repositories: Vec<String> = message_parts.get(1).unwrap_or(&"")
-        .split(',')
-        .map(|m| m.to_string())
-        .collect();
-    let functions: Vec<String> = message_parts.get(2).unwrap_or(&"")
-        .split(',')
+    let repository_raw = message_parts.get(1).map(|message| message.trim());
+    let repository_message = match repository_raw {
+        Some(m) if m.len() > 0 => m,
+        _ => bail!("Expected a non-empty repository identifier or wildcard"),
+    };
+
+    let function_raw = message_parts.get(2).map(|message| message.trim());
+    let function_message = match function_raw {
+        Some(m) if m.len() > 0 => m,
+        _ => bail!("Expected non-empty function identifiers or wildcard"),
+    };
+    let functions: Vec<String> = function_message.split(',')
         .map(|m| m.to_string())
         .collect();
 
     let scan_request = ScanRequest {
         _version: version,
-        repositories,
+        repositories: vec![
+            repository_message.into()
+        ],
         functions
     };
     Ok(scan_request)
-}
-
-fn run_container(config: Rc<Config>, workspace: &Workspace, repository_id: &str, code_function: &CodeFunction, commit: crate::models::GitCommit) -> Result<Scan, Error> {
-
-    workspace.clean(repository_id, false).context("Could not clean workspace before run")?;
-
-    let mut timing_ms: usize = 0;
-    let mut logs = "".to_string();
-    let mut has_failed = false;
-
-    let stage_total = code_function.stages.len();
-    let mut stage_count = 0;
-
-    for stage in &code_function.stages {
-
-        stage_count += 1;
-        info!("Executing stage of {}/{} \"{}\" : environment {} ({})", stage_count, stage_total, code_function.name, stage.environment.name, stage.environment.base_image);
-
-        let script_path = format!("bin/process.{}", &stage.environment.file_extension);
-        workspace.write_string(repository_id, &script_path, &stage.content)?;
-
-        let namespace_arg = format!("--namespace={}", config.container.namespace);
-        pull_image(&stage.environment.base_image, &namespace_arg).context("Could not pull container image")?;
-
-        let mut nerdctl = Command::new("nerdctl");
-        nerdctl
-            .arg(&namespace_arg)
-            .arg("run")
-            .arg("--rm")
-            // Security flags
-            .arg("--cap-drop")
-            .arg("all")
-            .arg("--security-opt")
-            .arg("apparmor=docker-default")
-            .arg("--security-opt")
-            .arg("no-new-privileges");
-
-        if code_function.capabilities.network {
-            nerdctl.arg("--network").arg("bridge");
-        }
-        else {
-            nerdctl.arg("--network").arg("none");
-        }
-        
-        if let Some(user) = &stage.environment.user {
-            nerdctl.arg("--user").arg(user);
-        }
-
-        nerdctl.arg("--volume") // Volume mounting
-            .arg(format!("{}/{}/repository:/workspace:ro", config.workspace.path, repository_id))
-            .arg("--volume")
-            .arg(format!("{}/{}/bin:/tmp-bin:ro", config.workspace.path, repository_id))
-            .arg("--volume")
-            .arg(format!("{}/{}/result:/result", config.workspace.path, repository_id))
-            .arg("--workdir")
-            .arg("/workspace");
-
-        if !code_function.capabilities.filesystem {
-            nerdctl.arg("--read-only");
-        }
-        
-        // Binary
-        nerdctl.arg(&stage.environment.base_image)
-            .arg(&stage.environment.executor)
-            .arg(format!("/tmp-bin/process.{}", &stage.environment.file_extension));
-        
-        let start_time = SystemTime::now();
-        let output = nerdctl.output()?;
-        timing_ms += crate::utils::compute_time_diff(start_time)?;
-
-        let stderr_logs = String::from_utf8(output.stderr).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
-        let stdout_logs = String::from_utf8(output.stdout).unwrap_or_else(|_| "(invalid UTF8 string)".to_string());
-        logs.push_str(
-            &format!("{}\n{}", stdout_logs, stderr_logs) // TODO More accurate mix
-        );
-
-        if !output.status.success() {
-            has_failed = true;
-        }
-
-        workspace.clean_bin(repository_id)?;
-    }
-
-    let mut metric_results: Option<HashMap<String, crate::models::MetricValue>> = None;
-    let potential_toml = workspace.read_string(repository_id, "result/data.toml");
-
-    if let Ok(toml_content) = potential_toml {
-
-        if let Ok(toml_results) = toml::from_str(&toml_content) {    // TODO TOML error handling
-            metric_results = Some(toml_results);
-        }
-    }
-
-    let results: Vec<ScanMetadata> = metric_results.unwrap_or_default().into_iter().map(|(result_key, result_value)| {
-        
-        let potential_description = code_function.outputs.iter()
-            .find(|output| output.key == result_key)
-            .map(|output| output.description.clone());
-
-        ScanMetadata {
-            key: result_key,
-            description: potential_description.unwrap_or_default(),
-            value: result_value
-        }
-
-    }).collect();
-
-    let finished_scan = Scan {
-        function_id: code_function.public_id.to_string(),
-        repository_id: repository_id.to_string(),
-        commit,
-        has_failed,
-        logs,
-        timing_ms,
-        results
-    };
-    Ok(finished_scan)
-}
-
-#[derive(Deserialize)]
-struct IssueContainer {
-    issues: Vec<CodeIssue>
 }
 
 fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Scheduler, function_id: &str, scan_id: &str) -> Result<(), Error> {
@@ -409,30 +230,158 @@ fn process_issues(workspace: &Workspace, repository_id: &str, scheduler: &Schedu
     Ok(())
 }
 
-fn pull_image(image_tag: &str, namespace_arg: &str) -> Result<(), Error> {
+#[cfg(test)]
+mod tests {
 
-    let process_result = Command::new("nerdctl")
-        .arg(namespace_arg)
-        .arg("image")
-        .arg("inspect")
-        .arg(image_tag)
-        .output();
+    use anyhow::Error;
+    use tungstenite::Message;
+    use super::{decode_message, ScanRequest};
 
-    let has_image = match process_result {
-        Ok(output) => output.status.success(),
-        Err(_) => false
-    };
+    #[test]
+    fn should_decode_basic_message() -> Result<(), Error> {
 
-    if has_image {
-        return Ok(());
+        let message = Message::text("v1;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;4ed8e41b-d226-4b4c-a55c-e22099173730");
+        let expected_request = ScanRequest {
+            _version: "v1".to_string(),
+            repositories: vec!["7b2c112a-f7e5-4106-bffe-4734eb4fe49a".into()],
+            functions: vec!["4ed8e41b-d226-4b4c-a55c-e22099173730".into()],
+        };
+
+        let decoded_message = decode_message(message)?;
+        assert_eq!(expected_request, decoded_message);
+
+        Ok(())
     }
 
-    info!("Pulling container image {}", image_tag);
-    Command::new("nerdctl")
-        .arg(namespace_arg)
-        .arg("image")
-        .arg("pull")
-        .arg(image_tag)
-        .output()?;
-    Ok(())
+    #[test]
+    fn should_decode_multi_function_message() -> Result<(), Error> {
+
+        let message = Message::text("v1;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;4ed8e41b-d226-4b4c-a55c-e22099173730,aebe69bd-5245-4dff-aa0b-d7cbb6a4efdf");
+        let expected_request = ScanRequest {
+            _version: "v1".to_string(),
+            repositories: vec![
+                "7b2c112a-f7e5-4106-bffe-4734eb4fe49a".into(),
+            ],
+            functions: vec![
+                "4ed8e41b-d226-4b4c-a55c-e22099173730".into(),
+                "aebe69bd-5245-4dff-aa0b-d7cbb6a4efdf".into()
+            ],
+        };
+
+        let decoded_message = decode_message(message)?;
+        assert_eq!(expected_request, decoded_message);
+
+        Ok(())
+    }
+
+    #[test]
+    fn should_decode_wildcard_function_message() -> Result<(), Error> {
+
+        let message = Message::text("v1;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;*");
+        let expected_request = ScanRequest {
+            _version: "v1".to_string(),
+            repositories: vec![
+                "7b2c112a-f7e5-4106-bffe-4734eb4fe49a".into(),
+            ],
+            functions: vec!["*".into()],
+        };
+
+        let decoded_message = decode_message(message)?;
+        assert_eq!(expected_request, decoded_message);
+
+        Ok(())
+    }
+
+    #[test]
+    fn should_reject_empty_function() {
+
+        let message = Message::text("v1;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;");
+     
+        assert!(matches!(
+            decode_message(message), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_empty_function_with_spaces() {
+
+        let message = Message::text("v1;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;       ");
+     
+        assert!(matches!(
+            decode_message(message), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_binary_message() {
+
+        assert!(matches!(
+            decode_message(Message::Binary(vec![0,1,0,1])), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_ping_message() {
+
+        assert!(matches!(
+            decode_message(Message::Ping(vec![0])), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_pong_message() {
+
+        assert!(matches!(
+            decode_message(Message::Ping(vec![1])), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_close_message() {
+
+        assert!(matches!(
+            decode_message(Message::Close(None)), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_too_many_components() {
+
+        let message = Message::text("v1;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;extra");
+
+        assert!(matches!(
+            decode_message(message), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_without_functions() {
+
+        let message = Message::text("v1;7b2c112a-f7e5-4106-bffe-4734eb4fe49a");
+
+        assert!(matches!(
+            decode_message(message), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_without_version() {
+
+        let message = Message::text("7b2c112a-f7e5-4106-bffe-4734eb4fe49a;4ed8e41b-d226-4b4c-a55c-e22099173730");
+
+        assert!(matches!(
+            decode_message(message), Err(_)
+        ));
+    }
+
+    #[test]
+    fn should_reject_unknown_versions() {
+
+        let message = Message::text("v2;7b2c112a-f7e5-4106-bffe-4734eb4fe49a;4ed8e41b-d226-4b4c-a55c-e22099173730");
+
+        assert!(matches!(
+            decode_message(message), Err(_)
+        ));
+    }
+
 }

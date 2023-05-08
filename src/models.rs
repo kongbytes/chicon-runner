@@ -5,7 +5,7 @@ use anyhow::{bail, Error};
 use git2::{RemoteCallbacks, Cred};
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::components::config::Config;
 
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]

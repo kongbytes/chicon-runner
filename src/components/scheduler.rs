@@ -1,11 +1,20 @@
 use std::time::Duration;
 use std::rc::Rc;
+use std::net::TcpStream;
+use std::thread;
+use std::process;
 
 use anyhow::Error;
 use isahc::{prelude::*, Request};
+use log::error;
+use log::info;
+use url::Url;
+use tungstenite::{connect, WebSocket, stream::MaybeTlsStream};
 
 use crate::models::{CodeFunction, Repository, Scan, CodeIssue, GenericModel, MassIssues};
-use crate::config::Config;
+use super::config::Config;
+
+pub type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
 
 pub struct Scheduler {
 
@@ -109,3 +118,70 @@ impl Scheduler {
 
 }
 
+/// Perform an authentication process with the scheduler
+pub fn authenticate_runner(shared_config: Rc<Config>, websocket: &mut Ws) {
+
+    websocket.write_message(tungstenite::Message::Text(shared_config.scheduler.token.to_string())).unwrap_or_else(|err| {
+        error!("Could not send authentication request, check the network connection ({})", err);
+        process::exit(1);
+    });
+    let auth_response = websocket.read_message().unwrap_or_else(|err| {
+        error!("Could not receive authentication response, check the network connection ({})", err);
+        process::exit(1);
+    });
+
+    match auth_response.to_text() {
+        Ok("auth-ok") => {
+            info!("Authentication done, the runner is ready to perform scans");
+        }
+        _ => {
+            error!("Authentication failed, check the runner token");
+            process::exit(1);
+        }
+    }
+}
+
+/// Try to perform a websocket connection with the scheduler
+pub fn try_scheduler_ws_connection(shared_config: Rc<Config>, websocket_url: &Url) -> Ws {
+
+    let mut some_websocket: Option<Ws> = None;
+
+    let mut retry_period = shared_config.scheduler.retry_period;
+    let retry_scale_factor = shared_config.scheduler.retry_scale_factor;
+    let retry_scale_limit = shared_config.scheduler.retry_scale_limit;
+    
+    loop {
+
+        let mut is_connected = false;
+
+        match connect(websocket_url) {
+            Ok((socket, _response)) => {
+
+                some_websocket = Some(socket);
+                is_connected = true;
+
+            },
+            Err(err) => {
+
+                error!("Scheduler connection failed: {}", err);
+                error!("Retry in {} seconds", retry_period);
+
+                let duration = Duration::from_secs(retry_period);
+                thread::sleep(duration);
+
+                if retry_period < retry_scale_limit {
+                    retry_period = ((retry_period as f32) * retry_scale_factor).round() as u64;
+                }
+
+            }
+        };
+
+        if is_connected && some_websocket.is_some() {
+            return some_websocket.unwrap_or_else(|| {
+                error!("Expected a valid websocket, internal logic error");
+                process::exit(1);
+            });
+        }
+
+    }
+}
