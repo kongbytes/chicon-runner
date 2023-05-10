@@ -21,7 +21,10 @@ fn main() -> Result<(), Error> {
             let requested_config = sub_matches.get_one::<String>("config");
             let config_path = find_default_config(requested_config);
 
-            commands::run::launch_runner(config_path).unwrap_or_else(|err| {
+            let workspace_option: Option<&String> = sub_matches.get_one::<String>("workspace");
+            let ns_option: Option<&String> = sub_matches.get_one::<String>("namespace");
+
+            commands::run::launch_runner(config_path, workspace_option, ns_option).unwrap_or_else(|err| {
                 eprintln!("Chicon runner process failed due to fatal error");
                 eprintln!("{}", err);
                 process::exit(1);

@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::thread;
 
 use anyhow::{bail, Context, Error, Result};
+use env_logger::Env;
 use log::{info, error, warn};
 use url::Url;
 use serde::Deserialize;
@@ -28,11 +29,11 @@ struct IssueContainer {
     issues: Vec<CodeIssue>
 }
 
-pub fn launch_runner(config_path: Option<&str>) -> Result<(), Error> {
+pub fn launch_runner(config_path: Option<&str>, workspace_option: Option<&String>, ns_option: Option<&String>) -> Result<(), Error> {
 
-    env_logger::init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    let config = match config_path {
+    let mut config = match config_path {
         Some(path) => {
     
             info!("Loading TOML runner configuration from {}", path);
@@ -48,15 +49,26 @@ pub fn launch_runner(config_path: Option<&str>) -> Result<(), Error> {
         }
     };
 
+    if let Some(workspace_path) = workspace_option {
+        config.set_workspace_path(workspace_path);
+    }
+
+    if let Some(namespace) = ns_option {
+        config.set_container_namespace(namespace);
+    }
+
     if config.scheduler.token.is_empty() {
         warn!("Runner token is empty, provide environment {} with authentication token", TOKEN_ENV);
     }
 
     let shared_config = Rc::new(config);
 
-    let workspace = Workspace::new(shared_config.clone());
-    let shared_workspace = Rc::new(workspace);
-    info!("Initialized workspace in '{}' path, performing storage check", shared_config.workspace.path);
+    let workspace = Workspace::new(shared_config.clone()).map_err(|err| {
+        error!("Failure on storage, could not create workspace in directory '{}'", shared_config.workspace.path);
+        err
+    })?;
+    let shared_workspace: Rc<Workspace> = Rc::new(workspace);
+    info!("Initialized workspace in '{}' path, performing storage check", shared_workspace.get_path());
 
     let storage_usage = shared_workspace.get_total_usage().map_err(|err| {
         error!("Failure on storage, could not compute size of '{}' path", shared_config.workspace.path);

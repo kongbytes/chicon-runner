@@ -152,4 +152,12 @@ impl Config {
         Ok(cache_mb * 1_000_000)
     }
 
+    pub fn set_workspace_path(&mut self, workspace_path: &str) {
+        self.workspace.path = workspace_path.into();
+    }
+
+    pub fn set_container_namespace(&mut self, namespace: &str) {
+        self.container.namespace = namespace.into();
+    }
+
 }

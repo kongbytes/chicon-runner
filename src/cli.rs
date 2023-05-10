@@ -15,6 +15,18 @@ pub fn build_cli() -> Command {
                         .long("config")
                         .help("Config file path")
                 )
+                .arg(
+                    Arg::new("workspace")
+                        .short('w')
+                        .long("workspace")
+                        .help("Workspace directory path")
+                )
+                .arg(
+                    Arg::new("namespace")
+                        .short('n')
+                        .long("namespace")
+                        .help("Containerd namespace")
+                )
         )
         .subcommand(
             Command::new("check")
