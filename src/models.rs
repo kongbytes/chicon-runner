@@ -157,8 +157,7 @@ pub struct FunctionOutput {
 #[derive(Deserialize)]
 pub struct Repository {
 
-    #[serde(rename = "publicId")]
-    pub public_id: String,
+    pub id: String,
 
     pub name: String,
     
@@ -203,7 +202,7 @@ impl Repository {
 
         let default_branch = "master";  // TODO
 
-        let repository_path = Path::new(&config.workspace.path).join(&self.public_id).join("repository");
+        let repository_path = Path::new(&config.workspace.path).join(&self.id).join("repository");
         let git_path = repository_path.join(".git");
 
         if git_path.is_dir() {

@@ -93,7 +93,7 @@ pub fn launch_runner(config_path: Option<&str>, workspace_option: Option<&String
 
         loop {
             process_message(&mut websocket, shared_config.clone(), shared_scheduler.clone(), shared_workspace.clone()).unwrap_or_else(|err| {
-                error!("Could not process message, {}", err);
+                error!("Could not process message due to error: {} ({})", err, err.root_cause().to_string());
             });
         }
 
@@ -140,9 +140,9 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
     let code_functions = scheduler.get_functions(&request.functions).context("Failure when retrieving functions")?;
     let repository = scheduler.get_repository(repository_id).context("Failure when retrieving repository")?;
 
-    workspace.clean(&repository.public_id, false)?;
+    workspace.clean(&repository.id, false)?;
 
-    info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.public_id, repository.branch, repository.directory);
+    info!("Starting functions on repository {} with ID {} ({:?}, {:?})", repository.name, repository.id, repository.branch, repository.directory);
     
     let last_commit = repository.pull_or_clone(shared_config.clone())?;
 
@@ -150,12 +150,12 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
 
         info!("Executing function \"{}\" (ID {})", code_function.name, code_function.public_id);
 
-        let finished_scan = run_container(shared_config.clone(), &workspace, &repository.public_id , code_function, last_commit.clone())?;
+        let finished_scan = run_container(shared_config.clone(), &workspace, &repository.id , code_function, last_commit.clone())?;
         let scan_id = scheduler.store_scan(finished_scan)?;
-        process_issues(&workspace, &repository.public_id, &scheduler, &code_function.public_id, &scan_id)?;
+        process_issues(&workspace, &repository.id, &scheduler, &code_function.public_id, &scan_id)?;
     }
 
-    workspace.clean(&repository.public_id, false)?;
+    workspace.clean(&repository.id, false)?;
     workspace.prune_storage()?;
 
     Ok(())
