@@ -103,7 +103,7 @@ pub fn launch_runner(config_path: Option<&str>, workspace_option: Option<&String
 
 fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<Scheduler>, workspace: Rc<Workspace>) -> Result<(), Error> {
 
-    let socket_read_result = websocket.read_message();
+    let socket_read_result = websocket.read();
 
     if let Err(read_error) = socket_read_result {
 

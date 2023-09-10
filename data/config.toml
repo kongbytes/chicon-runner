@@ -3,11 +3,11 @@
 [workspace]
 path = "./workspace"
 cache_limit = "20" # Mb
-ssh_clone_key = "~/.ssh/chicon-runner"
+ssh_clone_key = "/home/corentin/.ssh/id_chicon_runner"
 
 [scheduler]
 base_url = "localhost:3000"
-token = "xxx"
+token = "cdea7ac5-540d-4324-9055-261aca5832d8"
 retry_period = 5 # Seconds
 retry_scale_factor = 1.25
 retry_scale_limit = 30 # Seconds

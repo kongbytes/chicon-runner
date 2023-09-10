@@ -7,13 +7,13 @@ authors = ["Saluki"]
 edition = "2021"
 keywords = ["chicon", "runner", "sast", "security"]
 repository = "https://github.com/kongbytes/chicon-runner"
-rust-version = "1.64.0" 
+rust-version = "1.72.0" 
 
 [dependencies]
 
 # Essentials
-git2 = "0.17"
-tungstenite = "0.19"
+git2 = "0.18"
+tungstenite = "0.20"
 isahc = { version = "1.7", features = ["json"] }
 
 # Parsing

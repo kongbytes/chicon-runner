@@ -121,11 +121,11 @@ impl Scheduler {
 /// Perform an authentication process with the scheduler
 pub fn authenticate_runner(shared_config: Rc<Config>, websocket: &mut Ws) {
 
-    websocket.write_message(tungstenite::Message::Text(shared_config.scheduler.token.to_string())).unwrap_or_else(|err| {
+    websocket.send(tungstenite::Message::Text(shared_config.scheduler.token.to_string())).unwrap_or_else(|err| {
         error!("Could not send authentication request, check the network connection ({})", err);
         process::exit(1);
     });
-    let auth_response = websocket.read_message().unwrap_or_else(|err| {
+    let auth_response = websocket.read().unwrap_or_else(|err| {
         error!("Could not receive authentication response, check the network connection ({})", err);
         process::exit(1);
     });
