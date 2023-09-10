@@ -5,7 +5,7 @@ use std::thread;
 
 use anyhow::{bail, Context, Error, Result};
 use env_logger::Env;
-use log::{info, error, warn};
+use log::{info, error, warn, debug};
 use url::Url;
 use serde::Deserialize;
 
@@ -120,8 +120,8 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
     });
 
     let decode_result = decode_message(raw_message);
-    if decode_result.is_err() {
-        error!("Could not read text message from socket");
+    if let Err(err) = decode_result {
+        error!("Could not read text message from socket: {}", err);
         return Ok(()); 
     }
     let request = decode_result.unwrap_or_else(|err| {
@@ -165,6 +165,7 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
 fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Error> {
 
     let runner_command: &str = raw_message.to_text()?;
+    debug!("Received command '{}'", runner_command);
 
     let message_parts: Vec<&str> = runner_command.split(';').collect();
     if message_parts.len() != 3 {
@@ -180,13 +181,13 @@ fn decode_message(raw_message: tungstenite::Message) -> Result<ScanRequest, Erro
 
     let repository_raw = message_parts.get(1).map(|message| message.trim());
     let repository_message = match repository_raw {
-        Some(m) if m.len() > 0 => m,
+        Some(m) if !m.is_empty() => m,
         _ => bail!("Expected a non-empty repository identifier or wildcard"),
     };
 
     let function_raw = message_parts.get(2).map(|message| message.trim());
     let function_message = match function_raw {
-        Some(m) if m.len() > 0 => m,
+        Some(m) if !m.is_empty() => m,
         _ => bail!("Expected non-empty function identifiers or wildcard"),
     };
     let functions: Vec<String> = function_message.split(',')

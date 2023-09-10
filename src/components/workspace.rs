@@ -55,7 +55,7 @@ impl Workspace {
         let base_repository = &self.base_path.join(repository_id);
 
         if full_clean {
-            fs::remove_dir_all(&base_repository).ok();
+            fs::remove_dir_all(base_repository).ok();
         }
         else {
             fs::remove_dir_all(base_repository.join("bin")).ok();
@@ -63,7 +63,7 @@ impl Workspace {
         }
     
         if !base_repository.is_dir() {
-            fs::create_dir(&base_repository)?;
+            fs::create_dir(base_repository)?;
         }
         
         fs::create_dir(base_repository.join("bin"))?;

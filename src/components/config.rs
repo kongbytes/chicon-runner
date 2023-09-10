@@ -45,7 +45,7 @@ pub struct ConfigWorkspace {
     #[serde(default = "get_default_path")]
     pub path: String,
 
-    #[serde(default = "get_default_path")]
+    #[serde(default = "get_default_cache_limit")]
     pub cache_limit: String,
 
     pub ssh_clone_key: Option<String>
