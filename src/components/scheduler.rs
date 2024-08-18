@@ -66,7 +66,7 @@ impl Scheduler {
             return Ok(code_functions)
         }
 
-        if let Some("*") = functions.get(0).map(|first| first.as_ref()) {
+        if let Some("*") = functions.first().map(|first| first.as_ref()) {
             return Ok(code_functions)
         }
 
@@ -154,7 +154,7 @@ pub fn try_scheduler_ws_connection(shared_config: Rc<Config>, websocket_url: &Ur
 
         let mut is_connected = false;
 
-        match connect(websocket_url) {
+        match connect(websocket_url.to_string()) {
             Ok((socket, _response)) => {
 
                 some_websocket = Some(socket);

@@ -146,12 +146,6 @@ pub struct FunctionOutput {
 
     pub description: String,
 
-    #[serde(rename = "dataType")]
-    pub data_type: String, // TODO Should be enum
-
-    #[serde(rename = "defaultValue")]
-    pub default_value: MetricValue
-
 }
 
 #[derive(Deserialize)]
@@ -166,8 +160,6 @@ pub struct Repository {
     pub branch: Option<String>,
     
     pub directory: Option<String>,  // For monorepo use-cases 
-
-    pub tags: Vec<String>
 
 }
 

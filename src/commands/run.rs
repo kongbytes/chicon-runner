@@ -84,19 +84,15 @@ pub fn launch_runner(config_path: Option<&str>, workspace_option: Option<&String
     info!("Attempting connection on control plane ({})", websocker_raw_url);
     let websocket_url = Url::parse(&websocker_raw_url)?;
 
+    let mut websocket = try_scheduler_ws_connection(shared_config.clone(), &websocket_url);       
+    info!("Connected to the scheduler, sending authentication request");
+
+    authenticate_runner(shared_config.clone(), &mut websocket);
+
     loop {
-
-        let mut websocket = try_scheduler_ws_connection(shared_config.clone(), &websocket_url);       
-        info!("Connected to the scheduler, sending authentication request");
-
-        authenticate_runner(shared_config.clone(), &mut websocket);
-
-        loop {
-            process_message(&mut websocket, shared_config.clone(), shared_scheduler.clone(), shared_workspace.clone()).unwrap_or_else(|err| {
-                error!("Could not process message due to error: {} ({})", err, err.root_cause().to_string());
-            });
-        }
-
+        process_message(&mut websocket, shared_config.clone(), shared_scheduler.clone(), shared_workspace.clone()).unwrap_or_else(|err| {
+            error!("Could not process message due to error: {} ({})", err, err.root_cause().to_string());
+        });
     }
 }
 
@@ -128,7 +124,7 @@ fn process_message(websocket: &mut Ws, shared_config: Rc<Config>, scheduler: Rc<
         error!("Expected a decoded message, internal logic error ({})", err);
         process::exit(1);
     });
-    let repository_id = if let Some(repository_id) = request.repositories.get(0) {
+    let repository_id = if let Some(repository_id) = request.repositories.first() {
         repository_id
     }
     else {

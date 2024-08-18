@@ -86,8 +86,8 @@ impl Workspace {
 
         let absolute_path = &self.base_path.join(repository_id).join(relative_path);
 
-        let mut workspace_file = OpenOptions::new()
-                .read(false).write(true).create(true)
+        let mut workspace_file: fs::File = OpenOptions::new()
+                .read(false).create(true).append(true)
                 .open(absolute_path)?;
         workspace_file.write_all(content.as_bytes())?;
 
